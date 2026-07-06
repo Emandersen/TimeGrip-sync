@@ -2,6 +2,7 @@
 #include "db.hpp"
 #include "env.hpp"
 #include "gcal.hpp"
+#include "report.hpp"
 #include "timegrip.hpp"
 
 #include <chrono>
@@ -24,6 +25,7 @@ static void usage(const char* prog) {
         "Options:\n"
         "  --weeks N      Weeks ahead to sync (default: " << DEFAULT_WEEKS << ")\n"
         "  --dry-run      Fetch and display shifts without writing to calendar\n"
+        "  --report PATH  Generate HTML pay report and write to PATH\n"
         "  --version      Print version and exit\n"
         "  --help         Show this help\n"
         "\n"
@@ -55,9 +57,10 @@ static std::string weeks_offset_str(int weeks) {
 int main(int argc, char* argv[]) {
     load_dotenv();
 
-    int  weeks   = DEFAULT_WEEKS;
-    bool dry_run = false;
-    bool weeks_from_cli = false;
+    int         weeks          = DEFAULT_WEEKS;
+    bool        dry_run        = false;
+    bool        weeks_from_cli = false;
+    std::string report_path;
 
     for (int i = 1; i < argc; ++i) {
         std::string arg = argv[i];
@@ -71,6 +74,10 @@ int main(int argc, char* argv[]) {
                 return 1;
             }
             weeks_from_cli = true;
+            continue;
+        }
+        if (arg == "--report" && i + 1 < argc) {
+            report_path = argv[++i];
             continue;
         }
         std::cerr << "error: unknown option: " << arg << "\n";
@@ -160,6 +167,11 @@ int main(int argc, char* argv[]) {
                     }
                 }
             }
+            if (!report_path.empty()) {
+                std::cout << "\nReport:\n  Generating " << report_path << "…\n";
+                generate_report(report_path, timetable, func_map, pay_config_from_env());
+                std::cout << "  ✓ Report written\n";
+            }
             return 0;
         }
 
@@ -182,6 +194,12 @@ int main(int argc, char* argv[]) {
                   << result.updated   << " updated · "
                   << result.deleted   << " deleted · "
                   << result.unchanged << " unchanged\n";
+
+        if (!report_path.empty()) {
+            std::cout << "\nReport:\n  Generating " << report_path << "…\n";
+            generate_report(report_path, timetable, func_map, pay_config_from_env());
+            std::cout << "  ✓ Report written\n";
+        }
 
         // Database tracking (optional — only runs when DB_HOST is set)
 #ifdef HAVE_MYSQL

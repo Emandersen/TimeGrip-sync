@@ -5,10 +5,13 @@ on:
     - cron: "0 5 * * *"   # 05:00 UTC = 06:00/07:00 Copenhagen
   workflow_dispatch:        # manual trigger from the Actions tab
 
+permissions:
+  contents: write   # needed to push to gh-pages
+
 jobs:
   sync:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
 
     steps:
       - uses: actions/checkout@v4
@@ -20,11 +23,43 @@ jobs:
       - name: Build timegrip-sync
         run: nix build --no-link
 
-      - name: Run sync
+      - name: Run sync + generate report
         env:
+          # ── Credentials (Repository Secrets) ────────────────────────────
           SALLING_EMAIL:        ${{ secrets.SALLING_EMAIL }}
           SALLING_PASSWORD:     ${{ secrets.SALLING_PASSWORD }}
           GOOGLE_CLIENT_ID:     ${{ secrets.GOOGLE_CLIENT_ID }}
           GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_CLIENT_SECRET }}
           GOOGLE_REFRESH_TOKEN: ${{ secrets.GOOGLE_REFRESH_TOKEN }}
-        run: nix run . -- --weeks 12
+          # ── Sync settings (Repository Variables) ────────────────────────
+          SYNC_AHEAD_WEEKS:     ${{ vars.SYNC_AHEAD_WEEKS }}
+          SYNC_LOOKBACK_WEEKS:  ${{ vars.SYNC_LOOKBACK_WEEKS }}
+          # ── Wage config (Repository Variables) ──────────────────────────
+          HOURLY_RATE:          ${{ vars.HOURLY_RATE }}
+          EVENING_SUPPLEMENT:   ${{ vars.EVENING_SUPPLEMENT }}
+          SATURDAY_SUPPLEMENT:  ${{ vars.SATURDAY_SUPPLEMENT }}
+          SUNDAY_SUPPLEMENT:    ${{ vars.SUNDAY_SUPPLEMENT }}
+          EVENING_CUTOFF_HOUR:  ${{ vars.EVENING_CUTOFF_HOUR }}
+          AM_BIDRAG_PCT:        ${{ vars.AM_BIDRAG_PCT }}
+          TAX_PCT:              ${{ vars.TAX_PCT }}
+          EMPLOYEE_PENSION_PCT: ${{ vars.EMPLOYEE_PENSION_PCT }}
+          EMPLOYER_PENSION_PCT: ${{ vars.EMPLOYER_PENSION_PCT }}
+          ATP_DKK:              ${{ vars.ATP_DKK }}
+          KLUB_DKK:             ${{ vars.KLUB_DKK }}
+          FRITVALG_PCT:         ${{ vars.FRITVALG_PCT }}
+          FERIEFRI_PCT:         ${{ vars.FERIEFRI_PCT }}
+        run: |
+          mkdir -p report
+          nix run . -- --report report/index.html
+
+      - name: Deploy report to GitHub Pages
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          cp report/index.html /tmp/report.html
+          git fetch origin gh-pages
+          git checkout gh-pages
+          cp /tmp/report.html index.html
+          git add index.html
+          git diff --cached --quiet || git commit -m "report: $(date -u +%Y-%m-%dT%H:%MZ)"
+          git push origin gh-pages

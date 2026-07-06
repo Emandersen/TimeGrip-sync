@@ -27,6 +27,7 @@ add_executable(timegrip-sync
     src/timegrip.cpp
     src/gcal.cpp
     src/db.cpp
+    src/report.cpp
 )
 
 target_link_libraries(timegrip-sync
