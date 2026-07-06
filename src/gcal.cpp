@@ -255,7 +255,7 @@ std::vector<CalendarEvent> fetch_managed_events(const std::string& access_token,
 
     do {
         Params params = {
-            {"timeMin",                 from_date + "T00:00:00Z"},
+            {"timeMin",                 from_date + "T00:00:00%2B02:00"},
             {"timeMax",                 to_date   + "T23:59:59Z"},
             {"privateExtendedProperty", "source=timegrip"},
             {"singleEvents",            "true"},
@@ -448,12 +448,18 @@ SyncResult sync_calendar(const std::string& access_token,
 
     auto existing_vec = fetch_managed_events(access_token, calendar_id,
                                              from_date, to_date);
-    std::map<std::string, CalendarEvent> existing;
-    for (auto& ev : existing_vec)
-        existing[ev.timegrip_id] = ev;
-
     SyncResult result;
     std::string cal_path = CALENDAR_API + "/calendars/" + calendar_id + "/events";
+
+    std::map<std::string, CalendarEvent> existing;
+    for (auto& ev : existing_vec) {
+        if (existing.count(ev.timegrip_id)) {
+            gc.del(cal_path + "/" + ev.id);
+            ++result.deleted;
+        } else {
+            existing[ev.timegrip_id] = ev;
+        }
+    }
 
     auto extract_dt = [](const json& body, bool all_day) -> std::pair<std::string,std::string> {
         std::string s, e;
