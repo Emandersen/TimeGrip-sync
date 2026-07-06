@@ -420,6 +420,7 @@ SyncResult sync_calendar(const std::string& access_token,
                     ? to_lower(shift.absence.type_caption) : "";
 
                 if (contains_any(caption_lc, SKIP_TYPES)) continue;
+                if (!shift.has_absence && shift.duration == 0) continue;
 
                 std::string tid;
                 if (shift.has_absence && (!shift.worktime_id ||
