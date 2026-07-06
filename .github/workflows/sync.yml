@@ -51,7 +51,7 @@ jobs:
           FERIEFRI_PCT:         ${{ vars.FERIEFRI_PCT }}
         run: |
           mkdir -p report
-          nix run . -- --report report/index.html
+          nix run . -- --report report/report.html
 
       # ── Check whether FTP is configured ─────────────────────────────────────
       - name: Check FTP config
@@ -80,23 +80,29 @@ jobs:
         run: |
           sudo apt-get install -y lftp -qq
 
-          # .htpasswd — apache-MD5 hash, username: admin
-          HASHED=$(nix-shell -p openssl --run "openssl passwd -apr1 '$REPORT_PASSWORD'")
-          printf 'admin:%s\n' "$HASHED" > report/.htpasswd
+          # PHP bcrypt hash of the report password
+          PHASH=$(php -r "echo password_hash(getenv('REPORT_PASSWORD'), PASSWORD_DEFAULT);")
 
-          # .htaccess — use ${DOCUMENT_ROOT} so no hardcoded server path needed
-          printf 'AuthType Basic\nAuthName "Loenseddel"\nAuthUserFile ${DOCUMENT_ROOT}/.htpasswd\nRequire valid-user\n' > report/.htaccess
+          # index.php — login form + cookie auth wrapping report.html
+          python3 -c "
+import sys
+t = open('deploy/login_template.php').read()
+print(t.replace('__HASH__', sys.argv[1]), end='')
+" "$PHASH" > report/index.php
 
-          # Upload all three files
+          # .htaccess — block direct access to report.html
+          printf '<Files "report.html">\n  Require all denied\n</Files>\nDirectoryIndex index.php\n' > report/.htaccess
+
+          # Upload report.html, index.php, .htaccess
           lftp -c "
             open -u '$FTP_USER','$FTP_PASSWORD' ftp://$FTP_HOST
             set ftp:ssl-allow yes
             set ssl:verify-certificate no
             set ftp:passive-mode yes
             mkdir -fp $FTP_REMOTE_DIR 2>/dev/null; true
-            put report/index.html  -o ${FTP_REMOTE_DIR}index.html
+            put report/report.html -o ${FTP_REMOTE_DIR}report.html
+            put report/index.php   -o ${FTP_REMOTE_DIR}index.php
             put report/.htaccess   -o ${FTP_REMOTE_DIR}.htaccess
-            put report/.htpasswd   -o ${FTP_REMOTE_DIR}.htpasswd
             bye
           "
           echo "✓ Report deployed to $FTP_HOST/$FTP_REMOTE_DIR"
@@ -107,5 +113,5 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: pay-report-${{ github.run_number }}
-          path: report/index.html
+          path: report/report.html
           retention-days: 30
