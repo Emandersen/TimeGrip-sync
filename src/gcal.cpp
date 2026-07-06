@@ -339,8 +339,11 @@ static json build_event_body(const Shift& s, const std::string& day_date,
                              const std::string& timegrip_id) {
     json ext = {{"source", "timegrip"}, {"timegrip_id", timegrip_id}};
 
-    if (s.has_absence && !s.worktime_id) {
-        // Pure all-day absence
+    auto caption_lc = to_lower(s.absence.type_caption);
+    bool is_absence_event = s.has_absence &&
+        (!s.worktime_id || contains_any(caption_lc, VACATION_TYPES));
+
+    if (is_absence_event) {
         return {
             {"summary",     s.absence.type_caption + " — guaranteed no work"},
             {"start",       {{"date", day_date}}},
@@ -420,11 +423,9 @@ SyncResult sync_calendar(const std::string& access_token,
                     ? to_lower(shift.absence.type_caption) : "";
 
                 if (contains_any(caption_lc, SKIP_TYPES)) continue;
-                // Skip zero-duration timed shifts (garbage Timegrip entries).
-                // Pure all-day absences (has_absence=true, worktime_id=0) are exempt
-                // since they don't use duration.
-                bool pure_absence = shift.has_absence && !shift.worktime_id;
-                if (!pure_absence && shift.duration == 0) continue;
+                bool is_absence_event = shift.has_absence &&
+                    (!shift.worktime_id || contains_any(caption_lc, VACATION_TYPES));
+                if (!is_absence_event && shift.duration == 0) continue;
 
                 std::string tid;
                 if (shift.has_absence && (!shift.worktime_id ||
