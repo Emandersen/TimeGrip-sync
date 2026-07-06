@@ -42,9 +42,9 @@ static std::string iso_now(int offset_weeks = 0) {
     return buf;
 }
 
-Timetable fetch_timetable(HttpClient& session, int weeks_ahead) {
+Timetable fetch_timetable(HttpClient& session, int weeks_ahead, int weeks_back) {
     auto r = session.get(TG_BASE_URL + "/webapi/?func=MyWorktimes", {
-        {"from_date", iso_now(0)},
+        {"from_date", iso_now(-weeks_back)},
         {"to_date",   iso_now(weeks_ahead)},
     });
     if (r.status != 200)

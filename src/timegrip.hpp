@@ -42,5 +42,5 @@ struct Timetable {
 
 using FunctionMap = std::map<std::string, std::string>;  // id → name
 
-Timetable   fetch_timetable(HttpClient& session, int weeks_ahead = 12);
+Timetable   fetch_timetable(HttpClient& session, int weeks_ahead = 12, int weeks_back = 0);
 FunctionMap fetch_function_names(HttpClient& session);

@@ -34,20 +34,11 @@ static void usage(const char* prog) {
         "  GOOGLE_CLIENT_SECRET   Google OAuth2 client secret\n"
         "  GOOGLE_REFRESH_TOKEN   OAuth2 refresh token (obtained on first run)\n"
         "\n"
-        "  SYNC_LOOKBACK_WEEKS    Weeks behind today to protect from deletion (default: 4)\n"
+        "  SYNC_AHEAD_WEEKS       Weeks ahead to sync (default: 12, overridden by --weeks)\n"
+        "  SYNC_LOOKBACK_WEEKS    Weeks behind today that can be changed (default: 4)\n"
         "\n"
         "  DB_HOST / DB_PORT / DB_USER / DB_PASSWORD / DB_DATABASE\n"
         "                         MySQL connection (optional, for future use)\n";
-}
-
-static std::string today_str() {
-    auto now = std::chrono::system_clock::now();
-    std::time_t t = std::chrono::system_clock::to_time_t(now);
-    std::tm tm{};
-    gmtime_r(&t, &tm);
-    char buf[16];
-    std::strftime(buf, sizeof(buf), "%Y-%m-%d", &tm);
-    return buf;
 }
 
 static std::string weeks_offset_str(int weeks) {
@@ -66,6 +57,7 @@ int main(int argc, char* argv[]) {
 
     int  weeks   = DEFAULT_WEEKS;
     bool dry_run = false;
+    bool weeks_from_cli = false;
 
     for (int i = 1; i < argc; ++i) {
         std::string arg = argv[i];
@@ -78,11 +70,20 @@ int main(int argc, char* argv[]) {
                 std::cerr << "error: --weeks must be 1-52\n";
                 return 1;
             }
+            weeks_from_cli = true;
             continue;
         }
         std::cerr << "error: unknown option: " << arg << "\n";
         usage(argv[0]);
         return 1;
+    }
+
+    if (!weeks_from_cli) {
+        auto ahead_env = get_env("SYNC_AHEAD_WEEKS");
+        if (!ahead_env.empty()) {
+            int v = std::stoi(ahead_env);
+            if (v >= 1 && v <= 52) weeks = v;
+        }
     }
 
     try {
@@ -94,15 +95,6 @@ int main(int argc, char* argv[]) {
                                   require_env("SALLING_PASSWORD"));
         std::cout << "  ✓ Timegrip session ready\n";
 
-        std::cout << "  Fetching timetable…\n";
-        auto timetable = fetch_timetable(*session, weeks);
-        auto func_map  = fetch_function_names(*session);
-
-        int total_shifts = 0;
-        for (auto& w : timetable.weeks)
-            for (auto& d : w.days)
-                total_shifts += static_cast<int>(d.shifts.size());
-
         int lookback = 4;
         auto lb_env = get_env("SYNC_LOOKBACK_WEEKS");
         if (!lb_env.empty()) {
@@ -110,11 +102,19 @@ int main(int argc, char* argv[]) {
             if (v >= 0 && v <= 52) lookback = v;
         }
 
-        std::string today     = today_str();
+        std::cout << "  Fetching timetable…\n";
+        auto timetable = fetch_timetable(*session, weeks, lookback);
+        auto func_map  = fetch_function_names(*session);
+
+        int total_shifts = 0;
+        for (auto& w : timetable.weeks)
+            for (auto& d : w.days)
+                total_shifts += static_cast<int>(d.shifts.size());
+
         std::string from_date = weeks_offset_str(-lookback);
         std::string to_date   = weeks_offset_str(weeks);
         std::cout << "  " << total_shifts << " shifts fetched ("
-                  << today << " → " << to_date << ")\n";
+                  << from_date << " → " << to_date << ")\n";
 
         if (dry_run) {
             std::cout << "\n[dry-run] Timetable:\n";
@@ -175,7 +175,7 @@ int main(int argc, char* argv[]) {
         std::cout << "  Syncing events…\n";
         auto result = sync_calendar(tokens.access_token, calendar_id,
                                     timetable, func_map,
-                                    from_date, to_date, today);
+                                    from_date, to_date, from_date);
 
         std::cout << "\n✓ Done — "
                   << result.created   << " created · "
