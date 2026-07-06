@@ -420,7 +420,11 @@ SyncResult sync_calendar(const std::string& access_token,
                     ? to_lower(shift.absence.type_caption) : "";
 
                 if (contains_any(caption_lc, SKIP_TYPES)) continue;
-                if (!shift.has_absence && shift.duration == 0) continue;
+                // Skip zero-duration timed shifts (garbage Timegrip entries).
+                // Pure all-day absences (has_absence=true, worktime_id=0) are exempt
+                // since they don't use duration.
+                bool pure_absence = shift.has_absence && !shift.worktime_id;
+                if (!pure_absence && shift.duration == 0) continue;
 
                 std::string tid;
                 if (shift.has_absence && (!shift.worktime_id ||
