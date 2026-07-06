@@ -84,11 +84,7 @@ jobs:
           PHASH=$(php -r "echo password_hash(getenv('REPORT_PASSWORD'), PASSWORD_DEFAULT);")
 
           # index.php — login form + cookie auth wrapping report.html
-          python3 -c "
-import sys
-t = open('deploy/login_template.php').read()
-print(t.replace('__HASH__', sys.argv[1]), end='')
-" "$PHASH" > report/index.php
+          python3 -c "import sys; t=open('deploy/login_template.php').read(); sys.stdout.write(t.replace('__HASH__', sys.argv[1]))" "$PHASH" > report/index.php
 
           # .htaccess — block direct access to report.html
           printf '<Files "report.html">\n  Require all denied\n</Files>\nDirectoryIndex index.php\n' > report/.htaccess
