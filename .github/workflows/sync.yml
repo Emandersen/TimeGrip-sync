@@ -5,9 +5,6 @@ on:
     - cron: "0 5 * * *"   # 05:00 UTC = 06:00/07:00 Copenhagen
   workflow_dispatch:        # manual trigger from the Actions tab
 
-permissions:
-  contents: write   # needed to push to gh-pages
-
 jobs:
   sync:
     runs-on: ubuntu-latest
@@ -56,14 +53,65 @@ jobs:
           mkdir -p report
           nix run . -- --report report/index.html
 
-      - name: Deploy report to GitHub Pages
+      # ── Check whether FTP is configured ─────────────────────────────────────
+      - name: Check FTP config
+        id: ftp
+        env:
+          FTP_HOST:        ${{ secrets.FTP_HOST }}
+          FTP_USER:        ${{ secrets.FTP_USER }}
+          FTP_PASSWORD:    ${{ secrets.FTP_PASSWORD }}
+          REPORT_PASSWORD: ${{ secrets.REPORT_PASSWORD }}
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          cp report/index.html /tmp/report.html
-          git fetch origin gh-pages
-          git checkout gh-pages
-          cp /tmp/report.html index.html
-          git add index.html
-          git diff --cached --quiet || git commit -m "report: $(date -u +%Y-%m-%dT%H:%MZ)"
-          git push origin gh-pages
+          if [ -n "$FTP_HOST" ] && [ -n "$FTP_USER" ] && [ -n "$FTP_PASSWORD" ] && [ -n "$REPORT_PASSWORD" ]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      # ── FTP deploy (runs when FTP secrets are set) ───────────────────────────
+      - name: Deploy report via FTP
+        if: steps.ftp.outputs.enabled == 'true'
+        env:
+          FTP_HOST:           ${{ secrets.FTP_HOST }}
+          FTP_USER:           ${{ secrets.FTP_USER }}
+          FTP_PASSWORD:       ${{ secrets.FTP_PASSWORD }}
+          REPORT_PASSWORD:    ${{ secrets.REPORT_PASSWORD }}
+          FTP_REMOTE_DIR:     ${{ vars.FTP_REMOTE_DIR }}
+          FTP_SERVER_WEBROOT: ${{ vars.FTP_SERVER_WEBROOT }}
+        run: |
+          sudo apt-get install -y lftp -qq
+
+          # .htpasswd — apache-MD5 hash, username: admin
+          HASHED=$(nix-shell -p openssl --run "openssl passwd -apr1 '$REPORT_PASSWORD'")
+          printf 'admin:%s\n' "$HASHED" > report/.htpasswd
+
+          # .htaccess — references .htpasswd by absolute server path
+          cat > report/.htaccess <<HTACCESS
+          AuthType Basic
+          AuthName "Lønoversigt"
+          AuthUserFile ${FTP_SERVER_WEBROOT}/.htpasswd
+          Require valid-user
+          HTACCESS
+
+          # Upload all three files
+          lftp -c "
+            open -u '$FTP_USER','$FTP_PASSWORD' ftp://$FTP_HOST
+            set ftp:ssl-allow yes
+            set ssl:verify-certificate no
+            set ftp:passive-mode yes
+            mkdir -fp $FTP_REMOTE_DIR 2>/dev/null; true
+            put report/index.html  -o ${FTP_REMOTE_DIR}index.html
+            put report/.htaccess   -o ${FTP_REMOTE_DIR}.htaccess
+            put report/.htpasswd   -o ${FTP_REMOTE_DIR}.htpasswd
+            bye
+          "
+          echo "✓ Report deployed to $FTP_HOST/$FTP_REMOTE_DIR"
+
+      # ── Artifact fallback (runs when FTP secrets are NOT set) ────────────────
+      - name: Upload report as artifact
+        if: steps.ftp.outputs.enabled == 'false'
+        uses: actions/upload-artifact@v4
+        with:
+          name: pay-report-${{ github.run_number }}
+          path: report/index.html
+          retention-days: 30
