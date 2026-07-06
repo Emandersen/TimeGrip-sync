@@ -341,7 +341,8 @@ static json build_event_body(const Shift& s, const std::string& day_date,
 
     auto caption_lc = to_lower(s.absence.type_caption);
     bool is_absence_event = s.has_absence &&
-        (!s.worktime_id || contains_any(caption_lc, VACATION_TYPES));
+        (!s.worktime_id || s.duration == 0 ||
+         contains_any(caption_lc, VACATION_TYPES));
 
     if (is_absence_event) {
         return {
@@ -424,7 +425,8 @@ SyncResult sync_calendar(const std::string& access_token,
 
                 if (contains_any(caption_lc, SKIP_TYPES)) continue;
                 bool is_absence_event = shift.has_absence &&
-                    (!shift.worktime_id || contains_any(caption_lc, VACATION_TYPES));
+                    (!shift.worktime_id || shift.duration == 0 ||
+                     contains_any(caption_lc, VACATION_TYPES));
                 if (!is_absence_event && shift.duration == 0) continue;
 
                 std::string tid;
