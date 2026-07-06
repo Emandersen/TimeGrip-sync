@@ -63,18 +63,13 @@ class ShiftTracker {
 public:
     explicit ShiftTracker(MySQLDatabase& db) : db_(db) {}
 
-    // Create tables if they don't exist.
     void ensure_schema();
-
-    // Record the start of a sync run. Returns the new run ID.
     int64_t begin_sync_run(int total_shifts);
-
-    // Record final counts (and optional error) for the run.
-    void finish_sync_run(int64_t run_id, int created, int updated, int deleted,
+    std::vector<int64_t> apply_changes(const std::vector<ShiftChange>& changes);
+    void finish_sync_run(int64_t run_id, bool success,
+                         int created, int updated, int deleted,
+                         const std::vector<int64_t>& change_ids,
                          const std::string& error_msg = "");
-
-    // Upsert the shifts snapshot table and append to shift_changes.
-    void apply_changes(int64_t run_id, const std::vector<ShiftChange>& changes);
 
 private:
     MySQLDatabase& db_;

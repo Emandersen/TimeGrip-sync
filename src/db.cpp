@@ -104,10 +104,12 @@ void ShiftTracker::ensure_schema() {
         "CREATE TABLE IF NOT EXISTS sync_runs ("
         "  id           INT          NOT NULL AUTO_INCREMENT PRIMARY KEY,"
         "  run_at       DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,"
+        "  success      TINYINT(1)   NOT NULL DEFAULT 0,"
         "  total_shifts INT          NOT NULL DEFAULT 0,"
         "  created      INT          NOT NULL DEFAULT 0,"
         "  updated      INT          NOT NULL DEFAULT 0,"
         "  deleted      INT          NOT NULL DEFAULT 0,"
+        "  change_ids   JSON         DEFAULT NULL,"
         "  error_msg    VARCHAR(512) DEFAULT NULL"
         ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4"
     );
@@ -128,18 +130,17 @@ void ShiftTracker::ensure_schema() {
 
     db_.execute(
         "CREATE TABLE IF NOT EXISTS shift_changes ("
-        "  id           INT          NOT NULL AUTO_INCREMENT PRIMARY KEY,"
-        "  sync_run_id  INT          NOT NULL,"
-        "  changed_at   DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,"
-        "  timegrip_id  VARCHAR(64)  NOT NULL,"
-        "  change_type  VARCHAR(16)  NOT NULL,"
-        "  old_summary  VARCHAR(255) DEFAULT NULL,"
-        "  old_start_dt VARCHAR(32)  DEFAULT NULL,"
-        "  old_end_dt   VARCHAR(32)  DEFAULT NULL,"
-        "  new_summary  VARCHAR(255) DEFAULT NULL,"
-        "  new_start_dt VARCHAR(32)  DEFAULT NULL,"
-        "  new_end_dt   VARCHAR(32)  DEFAULT NULL,"
-        "  FOREIGN KEY (sync_run_id) REFERENCES sync_runs(id)"
+        "  id            INT          NOT NULL AUTO_INCREMENT PRIMARY KEY,"
+        "  changed_at    DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,"
+        "  timegrip_id   VARCHAR(64)  NOT NULL,"
+        "  change_type   VARCHAR(16)  NOT NULL,"
+        "  gcal_event_id VARCHAR(255) DEFAULT NULL,"
+        "  old_summary   VARCHAR(255) DEFAULT NULL,"
+        "  old_start_dt  VARCHAR(32)  DEFAULT NULL,"
+        "  old_end_dt    VARCHAR(32)  DEFAULT NULL,"
+        "  new_summary   VARCHAR(255) DEFAULT NULL,"
+        "  new_start_dt  VARCHAR(32)  DEFAULT NULL,"
+        "  new_end_dt    VARCHAR(32)  DEFAULT NULL"
         ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4"
     );
 }
@@ -152,18 +153,11 @@ int64_t ShiftTracker::begin_sync_run(int total_shifts) {
     return db_.last_insert_id();
 }
 
-void ShiftTracker::finish_sync_run(int64_t run_id,
-                                   int created, int updated, int deleted,
-                                   const std::string& error_msg) {
-    db_.execute(
-        "UPDATE sync_runs SET created=?, updated=?, deleted=?, error_msg=? WHERE id=?",
-        {std::to_string(created), std::to_string(updated), std::to_string(deleted),
-         error_msg, std::to_string(run_id)}
-    );
-}
+std::vector<int64_t> ShiftTracker::apply_changes(
+        const std::vector<ShiftChange>& changes) {
+    std::vector<int64_t> ids;
+    ids.reserve(changes.size());
 
-void ShiftTracker::apply_changes(int64_t run_id,
-                                  const std::vector<ShiftChange>& changes) {
     for (auto& ch : changes) {
         std::string type_str;
         switch (ch.type) {
@@ -173,7 +167,6 @@ void ShiftTracker::apply_changes(int64_t run_id,
         }
 
         if (ch.type != ShiftChange::Type::Deleted) {
-            // Upsert current state into the shifts snapshot table.
             db_.execute(
                 "INSERT INTO shifts"
                 "  (timegrip_id, gcal_event_id, summary, start_dt, end_dt, all_day)"
@@ -190,25 +183,46 @@ void ShiftTracker::apply_changes(int64_t run_id,
                  ch.start, ch.end, ch.all_day ? "1" : "0"}
             );
         } else {
-            // Remove from the live snapshot — history stays in shift_changes.
-            db_.execute(
-                "DELETE FROM shifts WHERE timegrip_id = ?",
-                {ch.timegrip_id}
-            );
+            db_.execute("DELETE FROM shifts WHERE timegrip_id = ?",
+                        {ch.timegrip_id});
         }
 
-        // Append to the immutable changelog.
         db_.execute(
             "INSERT INTO shift_changes"
-            "  (sync_run_id, timegrip_id, change_type,"
+            "  (timegrip_id, change_type, gcal_event_id,"
             "   old_summary, old_start_dt, old_end_dt,"
             "   new_summary, new_start_dt, new_end_dt)"
             " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            {std::to_string(run_id), ch.timegrip_id, type_str,
+            {ch.timegrip_id, type_str, ch.gcal_event_id,
              ch.old_summary, ch.old_start, ch.old_end,
              ch.summary,     ch.start,     ch.end}
         );
+        ids.push_back(db_.last_insert_id());
     }
+
+    return ids;
+}
+
+void ShiftTracker::finish_sync_run(int64_t run_id, bool success,
+                                   int created, int updated, int deleted,
+                                   const std::vector<int64_t>& change_ids,
+                                   const std::string& error_msg) {
+    std::string json = "[";
+    for (size_t i = 0; i < change_ids.size(); ++i) {
+        if (i) json += ",";
+        json += std::to_string(change_ids[i]);
+    }
+    json += "]";
+
+    db_.execute(
+        "UPDATE sync_runs"
+        " SET success=?, created=?, updated=?, deleted=?,"
+        "     change_ids=?, error_msg=?"
+        " WHERE id=?",
+        {success ? "1" : "0",
+         std::to_string(created), std::to_string(updated), std::to_string(deleted),
+         json, error_msg, std::to_string(run_id)}
+    );
 }
 
 #endif  // HAVE_MYSQL

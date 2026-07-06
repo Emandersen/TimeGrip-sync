@@ -193,12 +193,13 @@ int main(int argc, char* argv[]) {
                 ShiftTracker tracker(db);
                 tracker.ensure_schema();
 
-                auto run_id = tracker.begin_sync_run(total_shifts);
-                tracker.apply_changes(run_id, result.changes);
-                tracker.finish_sync_run(run_id,
+                auto run_id    = tracker.begin_sync_run(total_shifts);
+                auto change_ids = tracker.apply_changes(result.changes);
+                tracker.finish_sync_run(run_id, true,
                                         result.created,
                                         result.updated,
-                                        result.deleted);
+                                        result.deleted,
+                                        change_ids);
 
                 std::cout << "  " << result.changes.size()
                           << " change(s) recorded (run #"
