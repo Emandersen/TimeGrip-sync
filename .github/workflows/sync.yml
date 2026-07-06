@@ -31,6 +31,10 @@ jobs:
           GOOGLE_CLIENT_ID:     ${{ secrets.GOOGLE_CLIENT_ID }}
           GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_CLIENT_SECRET }}
           GOOGLE_REFRESH_TOKEN: ${{ secrets.GOOGLE_REFRESH_TOKEN }}
+          DB_HOST:              ${{ secrets.DB_HOST }}
+          DB_USER:              ${{ secrets.DB_USER }}
+          DB_PASSWORD:          ${{ secrets.DB_PASSWORD }}
+          DB_DATABASE:          ${{ secrets.DB_DATABASE }}
           # ── Sync settings (Repository Variables) ────────────────────────
           SYNC_AHEAD_WEEKS:     ${{ vars.SYNC_AHEAD_WEEKS }}
           SYNC_LOOKBACK_WEEKS:  ${{ vars.SYNC_LOOKBACK_WEEKS }}
