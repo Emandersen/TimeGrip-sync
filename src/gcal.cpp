@@ -406,7 +406,8 @@ SyncResult sync_calendar(const std::string& access_token,
                          const Timetable&   timetable,
                          const FunctionMap& func_map,
                          const std::string& from_date,
-                         const std::string& to_date) {
+                         const std::string& to_date,
+                         const std::string& protect_before) {
     GCalClient gc(access_token);
 
     std::map<std::string, json> desired;
@@ -427,7 +428,6 @@ SyncResult sync_calendar(const std::string& access_token,
                 } else if (shift.worktime_id) {
                     tid = std::to_string(shift.worktime_id);
                 } else if (!shift.start_time.empty()) {
-                    // No worktime_id — use date+start as stable composite key
                     tid = "shift_" + day_date + "_" + parse_time(shift.start_time);
                 } else {
                     continue;
@@ -473,6 +473,11 @@ SyncResult sync_calendar(const std::string& access_token,
             });
         } else if (events_differ(existing.at(tid), body)) {
             auto& ev = existing.at(tid);
+            if (!protect_before.empty() &&
+                    norm_dt(ev.start).substr(0, 10) < protect_before) {
+                ++result.unchanged;
+                continue;
+            }
             auto patched = body;
             patched["id"] = ev.id;
             gc.patch(cal_path + "/" + ev.id, patched);
@@ -485,11 +490,18 @@ SyncResult sync_calendar(const std::string& access_token,
                 body.value("summary", ""), s, e, all_day,
                 ev.summary, ev.start, ev.end
             });
+        } else {
+            ++result.unchanged;
         }
     }
 
     for (auto& [tid, ev] : existing) {
         if (desired.find(tid) == desired.end()) {
+            if (!protect_before.empty() &&
+                    norm_dt(ev.start).substr(0, 10) < protect_before) {
+                ++result.unchanged;
+                continue;
+            }
             gc.del(cal_path + "/" + ev.id);
             ++result.deleted;
 

@@ -48,9 +48,10 @@ struct ShiftChange {
 };
 
 struct SyncResult {
-    int created = 0;
-    int updated = 0;
-    int deleted = 0;
+    int created   = 0;
+    int updated   = 0;
+    int deleted   = 0;
+    int unchanged = 0;
     std::vector<ShiftChange> changes;
 };
 
@@ -60,4 +61,5 @@ SyncResult sync_calendar(const std::string& access_token,
                          const Timetable&   timetable,
                          const FunctionMap& func_map,
                          const std::string& from_date,
-                         const std::string& to_date);
+                         const std::string& to_date,
+                         const std::string& protect_before = "");
