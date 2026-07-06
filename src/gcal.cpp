@@ -426,6 +426,9 @@ SyncResult sync_calendar(const std::string& access_token,
                     tid = "absence_" + day_date + "_" + caption_lc;
                 } else if (shift.worktime_id) {
                     tid = std::to_string(shift.worktime_id);
+                } else if (!shift.start_time.empty()) {
+                    // No worktime_id — use date+start as stable composite key
+                    tid = "shift_" + day_date + "_" + parse_time(shift.start_time);
                 } else {
                     continue;
                 }
