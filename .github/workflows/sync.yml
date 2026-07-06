@@ -72,12 +72,11 @@ jobs:
       - name: Deploy report via FTP
         if: steps.ftp.outputs.enabled == 'true'
         env:
-          FTP_HOST:           ${{ secrets.FTP_HOST }}
-          FTP_USER:           ${{ secrets.FTP_USER }}
-          FTP_PASSWORD:       ${{ secrets.FTP_PASSWORD }}
-          REPORT_PASSWORD:    ${{ secrets.REPORT_PASSWORD }}
-          FTP_REMOTE_DIR:     ${{ vars.FTP_REMOTE_DIR }}
-          FTP_SERVER_WEBROOT: ${{ vars.FTP_SERVER_WEBROOT }}
+          FTP_HOST:        ${{ secrets.FTP_HOST }}
+          FTP_USER:        ${{ secrets.FTP_USER }}
+          FTP_PASSWORD:    ${{ secrets.FTP_PASSWORD }}
+          REPORT_PASSWORD: ${{ secrets.REPORT_PASSWORD }}
+          FTP_REMOTE_DIR:  ${{ vars.FTP_REMOTE_DIR }}
         run: |
           sudo apt-get install -y lftp -qq
 
@@ -85,13 +84,8 @@ jobs:
           HASHED=$(nix-shell -p openssl --run "openssl passwd -apr1 '$REPORT_PASSWORD'")
           printf 'admin:%s\n' "$HASHED" > report/.htpasswd
 
-          # .htaccess — references .htpasswd by absolute server path
-          cat > report/.htaccess <<HTACCESS
-          AuthType Basic
-          AuthName "Lønoversigt"
-          AuthUserFile ${FTP_SERVER_WEBROOT}/.htpasswd
-          Require valid-user
-          HTACCESS
+          # .htaccess — use ${DOCUMENT_ROOT} so no hardcoded server path needed
+          printf 'AuthType Basic\nAuthName "Loenseddel"\nAuthUserFile ${DOCUMENT_ROOT}/.htpasswd\nRequire valid-user\n' > report/.htaccess
 
           # Upload all three files
           lftp -c "
