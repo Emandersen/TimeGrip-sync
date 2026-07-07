@@ -4,7 +4,7 @@ Designet to pull work schedules from Timegrip/Timeplan and sync it with google c
 
 In this specific repo it is set to run every morning with Github Actions.
 
-!!Currently designed to work specifically with Salling Groups SSO login!!
+> Currently designed to work specifically with Salling Groups SSO login
 
 ## What it does
 
@@ -59,3 +59,10 @@ Three tables, all created automatically on first `--save` run:
 - `shift_changes` — immutable changelog (created/updated/deleted)
 - `sync_runs` — one row per execution with counts and a JSON array of change IDs
 - `loen_periods` — one row per pay month with structured aggregates + full HTML; `locked=1` once pay date has passed
+
+> ## TODO 
+> - Notifications through webhooks to various services on schedule changes, or when nearing a shift 
+> - Visualisation of shift changes data, to easy be able to inspect when changes were made to the schedule and what changes
+> - Rework CLI application to be less Salling specific, thus to work more generally with TimeGrip
+> - Support for different calenders, Outlook, Apple Calender.
+> - .md report output format
