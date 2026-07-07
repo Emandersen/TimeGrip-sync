@@ -1,8 +1,9 @@
 <?php
-$pass_hash   = '__HASH__';
+$pw_hash     = '__HASH__';
+$salt        = '__SALT__';
 $cookie_name = 'loen_auth';
 $cookie_ttl  = 365 * 24 * 3600;
-$valid_token = hash_hmac('sha256', 'loen_v1', $pass_hash);
+$valid_token = hash_hmac('sha256', 'loen_v1', $pw_hash);
 
 if (isset($_GET['logout'])) {
     setcookie($cookie_name, '', time() - 3600, '/');
@@ -12,8 +13,9 @@ if (isset($_GET['logout'])) {
 
 $error = false;
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['password'])) {
-    if (password_verify($_POST['password'], $pass_hash)) {
-        setcookie($cookie_name, $valid_token, time() + $cookie_ttl, '/', '', true, true);
+    $attempt = hash_pbkdf2('sha256', $_POST['password'], $salt, 100000);
+    if (hash_equals($pw_hash, $attempt)) {
+        setcookie($cookie_name, $valid_token, time() + $cookie_ttl, '/', '', false, true);
         header('Location: ' . strtok($_SERVER['REQUEST_URI'], '?'));
         exit;
     }

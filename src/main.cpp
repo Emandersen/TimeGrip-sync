@@ -2,18 +2,46 @@
 #include "db.hpp"
 #include "env.hpp"
 #include "gcal.hpp"
+#include "period.hpp"
 #include "report.hpp"
 #include "timegrip.hpp"
 
+#include <openssl/evp.h>
+
 #include <chrono>
+#include <cstring>
 #include <ctime>
+#include <filesystem>
 #include <iomanip>
 #include <iostream>
 #include <stdexcept>
 #include <string>
 
-static const std::string VERSION      = "1.0.0";
+static const std::string VERSION       = "1.0.0";
 static const int         DEFAULT_WEEKS = 12;
+
+// PBKDF2-SHA256, 100 000 iterations, fixed salt → 64-char lowercase hex
+static std::string compute_pbkdf2_hex(const std::string& password) {
+    static const char salt[] = "";
+    unsigned char out[32];
+    PKCS5_PBKDF2_HMAC(password.c_str(), static_cast<int>(password.size()),
+                      reinterpret_cast<const unsigned char*>(salt),
+                      static_cast<int>(sizeof(salt) - 1),
+                      100000, EVP_sha256(), 32, out);
+    char hex[65];
+    for (int i = 0; i < 32; ++i)
+        snprintf(hex + i * 2, 3, "%02x", out[i]);
+    return hex;
+}
+
+static void today_dmy(int& d, int& mo, int& y) {
+    std::time_t now = std::time(nullptr);
+    std::tm utc{};
+    gmtime_r(&now, &utc);
+    d  = utc.tm_mday;
+    mo = utc.tm_mon + 1;
+    y  = utc.tm_year + 1900;
+}
 
 static void usage(const char* prog) {
     std::cout <<
@@ -25,7 +53,8 @@ static void usage(const char* prog) {
         "Options:\n"
         "  --weeks N      Weeks ahead to sync (default: " << DEFAULT_WEEKS << ")\n"
         "  --dry-run      Fetch and display shifts without writing to calendar\n"
-        "  --report PATH  Generate HTML pay report and write to PATH\n"
+        "  --report DIR   Generate pay report files into directory DIR\n"
+        "  --save         Write shift tracking and period archive to DB\n"
         "  --version      Print version and exit\n"
         "  --help         Show this help\n"
         "\n"
@@ -39,8 +68,10 @@ static void usage(const char* prog) {
         "  SYNC_AHEAD_WEEKS       Weeks ahead to sync (default: 12, overridden by --weeks)\n"
         "  SYNC_LOOKBACK_WEEKS    Weeks behind today that can be changed (default: 4)\n"
         "\n"
+        "  REPORT_PASSWORD        Password for the web report (gate.php)\n"
+        "\n"
         "  DB_HOST / DB_PORT / DB_USER / DB_PASSWORD / DB_DATABASE\n"
-        "                         MySQL connection (optional, for future use)\n";
+        "                         MySQL connection (used with --save)\n";
 }
 
 static std::string weeks_offset_str(int weeks) {
@@ -60,13 +91,15 @@ int main(int argc, char* argv[]) {
     int         weeks          = DEFAULT_WEEKS;
     bool        dry_run        = false;
     bool        weeks_from_cli = false;
-    std::string report_path;
+    bool        save_to_db     = false;
+    std::string report_dir;
 
     for (int i = 1; i < argc; ++i) {
         std::string arg = argv[i];
         if (arg == "--help" || arg == "-h") { usage(argv[0]); return 0; }
         if (arg == "--version")             { std::cout << VERSION << "\n"; return 0; }
         if (arg == "--dry-run")             { dry_run = true; continue; }
+        if (arg == "--save")                { save_to_db = true; continue; }
         if (arg == "--weeks" && i + 1 < argc) {
             weeks = std::stoi(argv[++i]);
             if (weeks < 1 || weeks > 52) {
@@ -77,7 +110,7 @@ int main(int argc, char* argv[]) {
             continue;
         }
         if (arg == "--report" && i + 1 < argc) {
-            report_path = argv[++i];
+            report_dir = argv[++i];
             continue;
         }
         std::cerr << "error: unknown option: " << arg << "\n";
@@ -123,6 +156,64 @@ int main(int argc, char* argv[]) {
         std::cout << "  " << total_shifts << " shifts fetched ("
                   << from_date << " → " << to_date << ")\n";
 
+        auto cfg = pay_config_from_env();
+
+        auto do_report = [&]() {
+            if (report_dir.empty()) return;
+
+            std::cout << "\nReport:\n  Computing periods…\n";
+            auto periods = compute_periods(timetable, func_map, cfg);
+
+            std::string pbkdf2_hex;
+            auto report_pw = get_env("REPORT_PASSWORD");
+            if (!report_pw.empty())
+                pbkdf2_hex = compute_pbkdf2_hex(report_pw);
+
+#ifdef HAVE_MYSQL
+            if (save_to_db && !get_env("DB_HOST").empty()) {
+                try {
+                    MySQLDatabase db(db_config_from_env());
+                    db.connect();
+                    PeriodArchive archive(db);
+                    archive.ensure_schema();
+
+                    int td, tmo, ty;
+                    today_dmy(td, tmo, ty);
+
+                    int saved = 0, skipped = 0;
+                    for (auto& pd : periods) {
+                        if (archive.is_locked(pd.pay_month, pd.pay_year)) {
+                            ++skipped;
+                            continue;
+                        }
+                        bool lock = (ty > pd.pay_year)
+                                 || (ty == pd.pay_year && tmo > pd.pay_month)
+                                 || (ty == pd.pay_year && tmo == pd.pay_month
+                                     && td >= days_in_month(pd.pay_month, pd.pay_year));
+                        archive.upsert_period(pd, lock);
+                        ++saved;
+                    }
+                    std::cout << "  " << saved << " period(s) archived";
+                    if (skipped) std::cout << ", " << skipped << " locked/skipped";
+                    std::cout << "\n";
+                } catch (const std::exception& e) {
+                    std::cerr << "  DB warning (period archive): " << e.what() << "\n";
+                }
+            }
+#endif
+
+            std::filesystem::create_directories(report_dir);
+
+            auto db_cfg = db_config_from_env();
+            if (!pbkdf2_hex.empty()) {
+                generate_gate_files(report_dir, db_cfg, pbkdf2_hex);
+                std::cout << "  ✓ gate.php + .htaccess written to " << report_dir << "\n";
+            } else {
+                generate_report(report_dir + "/report.html", timetable, func_map, cfg);
+                std::cout << "  ✓ report.html written to " << report_dir << "\n";
+            }
+        };
+
         if (dry_run) {
             std::cout << "\n[dry-run] Timetable:\n";
             const char* MON_NAMES[] = {"Jan","Feb","Mar","Apr","May","Jun",
@@ -130,7 +221,6 @@ int main(int argc, char* argv[]) {
             for (auto& w : timetable.weeks) {
                 std::cout << "\nWeek " << w.week << " · " << w.year << "\n";
                 for (auto& d : w.days) {
-                    // Parse DD-MM-YYYY
                     int day_n = 0, mon_n = 0;
                     if (d.date.size() == 10 && d.date[2] == '-') {
                         day_n = std::stoi(d.date.substr(0, 2));
@@ -167,11 +257,7 @@ int main(int argc, char* argv[]) {
                     }
                 }
             }
-            if (!report_path.empty()) {
-                std::cout << "\nReport:\n  Generating " << report_path << "…\n";
-                generate_report(report_path, timetable, func_map, pay_config_from_env());
-                std::cout << "  ✓ Report written\n";
-            }
+            do_report();
             return 0;
         }
 
@@ -195,15 +281,10 @@ int main(int argc, char* argv[]) {
                   << result.deleted   << " deleted · "
                   << result.unchanged << " unchanged\n";
 
-        if (!report_path.empty()) {
-            std::cout << "\nReport:\n  Generating " << report_path << "…\n";
-            generate_report(report_path, timetable, func_map, pay_config_from_env());
-            std::cout << "  ✓ Report written\n";
-        }
+        do_report();
 
-        // Database tracking (optional — only runs when DB_HOST is set)
 #ifdef HAVE_MYSQL
-        if (!get_env("DB_HOST").empty()) {
+        if (save_to_db && !get_env("DB_HOST").empty()) {
             std::cout << "\nDatabase:\n";
             try {
                 MySQLDatabase db(db_config_from_env());

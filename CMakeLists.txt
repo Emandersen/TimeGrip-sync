@@ -8,6 +8,7 @@ set(CMAKE_INSTALL_RPATH_USE_LINK_PATH TRUE)
 
 find_package(CURL REQUIRED)
 find_package(nlohmann_json REQUIRED)
+find_package(OpenSSL REQUIRED)
 
 # MySQL — optional, enabled when libmysqlclient is found
 find_package(PkgConfig QUIET)
@@ -34,6 +35,7 @@ target_link_libraries(timegrip-sync
     PRIVATE
         CURL::libcurl
         nlohmann_json::nlohmann_json
+        OpenSSL::Crypto
 )
 
 target_compile_options(timegrip-sync PRIVATE

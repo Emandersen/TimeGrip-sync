@@ -225,4 +225,82 @@ void ShiftTracker::finish_sync_run(int64_t run_id, bool success,
     );
 }
 
+void PeriodArchive::ensure_schema() {
+    db_.execute(
+        "CREATE TABLE IF NOT EXISTS loen_periods ("
+        "  id                INT          NOT NULL AUTO_INCREMENT PRIMARY KEY,"
+        "  period_start      DATE         NOT NULL,"
+        "  period_end        DATE         NOT NULL,"
+        "  pay_date          DATE         NOT NULL,"
+        "  shift_count       INT          NOT NULL DEFAULT 0,"
+        "  total_hours       DECIMAL(6,2) NOT NULL DEFAULT 0,"
+        "  brutto_dkk        DECIMAL(10,2) NOT NULL DEFAULT 0,"
+        "  net_estimated_dkk DECIMAL(10,2) NOT NULL DEFAULT 0,"
+        "  fritvalg_dkk      DECIMAL(10,2) NOT NULL DEFAULT 0,"
+        "  feriefri_dkk      DECIMAL(10,2) NOT NULL DEFAULT 0,"
+        "  html_content      LONGTEXT     DEFAULT NULL,"
+        "  locked            TINYINT(1)   NOT NULL DEFAULT 0,"
+        "  generated_at      DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP"
+        "                    ON UPDATE CURRENT_TIMESTAMP,"
+        "  UNIQUE KEY (period_start)"
+        ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4"
+    );
+}
+
+bool PeriodArchive::is_locked(int pay_month, int pay_year) {
+    int sm = pay_month - 1, sy = pay_year;
+    if (sm < 1) { sm = 12; --sy; }
+    char buf[16];
+    snprintf(buf, sizeof(buf), "%04d-%02d-16", sy, sm);
+    auto rows = db_.query(
+        "SELECT locked FROM loen_periods WHERE period_start = ? LIMIT 1",
+        {buf}
+    );
+    return !rows.empty() && rows[0]["locked"] == "1";
+}
+
+void PeriodArchive::upsert_period(const PeriodData& d, bool lock) {
+    char ps[16], pe[16], pd[16];
+    snprintf(ps, sizeof(ps), "%04d-%02d-%02d",
+             d.period_start_year, d.period_start_month, d.period_start_day);
+    snprintf(pe, sizeof(pe), "%04d-%02d-%02d",
+             d.period_end_year, d.period_end_month, d.period_end_day);
+    int last = days_in_month(d.pay_month, d.pay_year);
+    snprintf(pd, sizeof(pd), "%04d-%02d-%02d", d.pay_year, d.pay_month, last);
+
+    auto dstr = [](double v) {
+        char buf[32];
+        snprintf(buf, sizeof(buf), "%.2f", v);
+        return std::string(buf);
+    };
+
+    db_.execute(
+        "INSERT INTO loen_periods"
+        "  (period_start, period_end, pay_date, shift_count, total_hours,"
+        "   brutto_dkk, net_estimated_dkk, fritvalg_dkk, feriefri_dkk,"
+        "   html_content, locked)"
+        " VALUES (?,?,?,?,?,?,?,?,?,?,?)"
+        " ON DUPLICATE KEY UPDATE"
+        "  period_end        = VALUES(period_end),"
+        "  pay_date          = VALUES(pay_date),"
+        "  shift_count       = VALUES(shift_count),"
+        "  total_hours       = VALUES(total_hours),"
+        "  brutto_dkk        = VALUES(brutto_dkk),"
+        "  net_estimated_dkk = VALUES(net_estimated_dkk),"
+        "  fritvalg_dkk      = VALUES(fritvalg_dkk),"
+        "  feriefri_dkk      = VALUES(feriefri_dkk),"
+        "  html_content      = VALUES(html_content),"
+        "  locked            = IF(locked=1, 1, VALUES(locked))",
+        {ps, pe, pd,
+         std::to_string(d.shift_count),
+         dstr(d.total_hours),
+         dstr(d.brutto_dkk),
+         dstr(d.net_estimated_dkk),
+         dstr(d.fritvalg_dkk),
+         dstr(d.feriefri_dkk),
+         d.html_content,
+         lock ? "1" : "0"}
+    );
+}
+
 #endif  // HAVE_MYSQL

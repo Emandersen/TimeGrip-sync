@@ -1,6 +1,9 @@
 #pragma once
+#include "period.hpp"
 #include "timegrip.hpp"
+#include "db.hpp"
 #include <string>
+#include <vector>
 
 struct PayConfig {
     double hourly_rate          = 0.0;
@@ -21,7 +24,16 @@ struct PayConfig {
 
 PayConfig pay_config_from_env();
 
+std::vector<PeriodData> compute_periods(const Timetable& tt,
+                                        const FunctionMap& func_map,
+                                        const PayConfig& cfg);
+
 void generate_report(const std::string& out_path,
                      const Timetable& tt,
                      const FunctionMap& func_map,
                      const PayConfig& cfg);
+
+// pbkdf2_hash: 64-char hex PBKDF2-SHA256 of REPORT_PASSWORD; does nothing if empty.
+void generate_gate_files(const std::string& out_dir,
+                         const DbConfig& db_cfg,
+                         const std::string& pbkdf2_hash);

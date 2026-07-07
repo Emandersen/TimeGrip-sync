@@ -32,6 +32,7 @@ jobs:
           DB_USER:              ${{ secrets.DB_USER }}
           DB_PASSWORD:          ${{ secrets.DB_PASSWORD }}
           DB_DATABASE:          ${{ secrets.DB_DATABASE }}
+          REPORT_PASSWORD:      ${{ secrets.REPORT_PASSWORD }}
           # ── Sync settings (Repository Variables) ────────────────────────
           SYNC_AHEAD_WEEKS:     ${{ vars.SYNC_AHEAD_WEEKS }}
           SYNC_LOOKBACK_WEEKS:  ${{ vars.SYNC_LOOKBACK_WEEKS }}
@@ -51,18 +52,17 @@ jobs:
           FERIEFRI_PCT:         ${{ vars.FERIEFRI_PCT }}
         run: |
           mkdir -p report
-          nix run . -- --report report/report.html
+          nix run . -- --report report/ --save
 
       # ── Check whether FTP is configured ─────────────────────────────────────
       - name: Check FTP config
         id: ftp
         env:
-          FTP_HOST:        ${{ secrets.FTP_HOST }}
-          FTP_USER:        ${{ secrets.FTP_USER }}
-          FTP_PASSWORD:    ${{ secrets.FTP_PASSWORD }}
-          REPORT_PASSWORD: ${{ secrets.REPORT_PASSWORD }}
+          FTP_HOST:     ${{ secrets.FTP_HOST }}
+          FTP_USER:     ${{ secrets.FTP_USER }}
+          FTP_PASSWORD: ${{ secrets.FTP_PASSWORD }}
         run: |
-          if [ -n "$FTP_HOST" ] && [ -n "$FTP_USER" ] && [ -n "$FTP_PASSWORD" ] && [ -n "$REPORT_PASSWORD" ]; then
+          if [ -n "$FTP_HOST" ] && [ -n "$FTP_USER" ] && [ -n "$FTP_PASSWORD" ]; then
             echo "enabled=true" >> "$GITHUB_OUTPUT"
           else
             echo "enabled=false" >> "$GITHUB_OUTPUT"
@@ -72,42 +72,30 @@ jobs:
       - name: Deploy report via FTP
         if: steps.ftp.outputs.enabled == 'true'
         env:
-          FTP_HOST:        ${{ secrets.FTP_HOST }}
-          FTP_USER:        ${{ secrets.FTP_USER }}
-          FTP_PASSWORD:    ${{ secrets.FTP_PASSWORD }}
-          REPORT_PASSWORD: ${{ secrets.REPORT_PASSWORD }}
-          FTP_REMOTE_DIR:  ${{ vars.FTP_REMOTE_DIR }}
+          FTP_HOST:       ${{ secrets.FTP_HOST }}
+          FTP_USER:       ${{ secrets.FTP_USER }}
+          FTP_PASSWORD:   ${{ secrets.FTP_PASSWORD }}
+          FTP_REMOTE_DIR: ${{ vars.FTP_REMOTE_DIR }}
         run: |
           sudo apt-get install -y lftp -qq
 
-          # PHP bcrypt hash of the report password
-          PHASH=$(php -r "echo password_hash(getenv('REPORT_PASSWORD'), PASSWORD_DEFAULT);")
-
-          # index.php — login form + cookie auth wrapping report.html
-          python3 -c "import sys; t=open('deploy/login_template.php').read(); sys.stdout.write(t.replace('__HASH__', sys.argv[1]))" "$PHASH" > report/index.php
-
-          # .htaccess — block direct access to report.html
-          printf '<Files "report.html">\n  Require all denied\n</Files>\nDirectoryIndex index.php\n' > report/.htaccess
-
-          # Upload report.html, index.php, .htaccess
           lftp -c "
             open -u '$FTP_USER','$FTP_PASSWORD' ftp://$FTP_HOST
             set ftp:ssl-allow yes
             set ssl:verify-certificate no
             set ftp:passive-mode yes
             mkdir -fp $FTP_REMOTE_DIR 2>/dev/null; true
-            put report/report.html -o ${FTP_REMOTE_DIR}report.html
-            put report/index.php   -o ${FTP_REMOTE_DIR}index.php
-            put report/.htaccess   -o ${FTP_REMOTE_DIR}.htaccess
+            put report/gate.php   -o ${FTP_REMOTE_DIR}gate.php
+            put report/.htaccess  -o ${FTP_REMOTE_DIR}.htaccess
             bye
           "
           echo "✓ Report deployed to $FTP_HOST/$FTP_REMOTE_DIR"
 
-      # ── Artifact fallback (runs when FTP secrets are NOT set) ────────────────
+      # ── Artifact fallback ────────────────────────────────────────────────────
       - name: Upload report as artifact
-        if: steps.ftp.outputs.enabled == 'false'
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: pay-report-${{ github.run_number }}
-          path: report/report.html
+          path: report/
           retention-days: 30

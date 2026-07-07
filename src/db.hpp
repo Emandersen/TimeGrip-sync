@@ -1,4 +1,5 @@
 #pragma once
+#include "period.hpp"
 #include <map>
 #include <stdexcept>
 #include <string>
@@ -70,6 +71,18 @@ public:
                          int created, int updated, int deleted,
                          const std::vector<int64_t>& change_ids,
                          const std::string& error_msg = "");
+
+private:
+    MySQLDatabase& db_;
+};
+
+class PeriodArchive {
+public:
+    explicit PeriodArchive(MySQLDatabase& db) : db_(db) {}
+
+    void ensure_schema();
+    bool is_locked(int pay_month, int pay_year);
+    void upsert_period(const PeriodData& data, bool lock);
 
 private:
     MySQLDatabase& db_;
