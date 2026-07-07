@@ -1,32 +1,32 @@
 # timegrip-sync
 
-Designet to pull work schedules from Timegrip/Timeplan and sync it with google calender. Additionally it calculates estimated pay based on hourly wages and creates a report which can be automatically published to a web server to always be up to date with expected pay. Supports database storage to log changes in shifts.
+Pulls my work schedule from Timegrip and syncs it to Google Calendar. Also calculates estimated pay and publishes a password-protected report to a web server so I always have an up-to-date picture of what I'm earning.
 
-In this specific repo it is set to run every morning with Github Actions.
+Runs every morning via GitHub Actions.
 
-> Requires a Timegrip/Timeplan instance with ADFS SSO (SAML). The base URL and ADFS host are configured via environment variables.
+> Requires a Timegrip/Timeplan instance with ADFS SSO (SAML). The base URL is configured via environment variables.
 
 ## What it does
 
-- Logs into Timegrip via SSO (ADFS/SAML), fetches upcoming and recent shifts
-- Creates/updates/deletes Google Calendar events to match
+- Logs into Timegrip via SSO (ADFS/SAML) and fetches upcoming and recent shifts
+- Diffs against the DB snapshot to figure out what changed, then creates/updates/deletes Google Calendar events accordingly
 - Calculates gross pay, estimated net, supplements (evening, Saturday, Sunday), pension, AM-bidrag, ATP, etc.
-- Archives a per-month HTML report in MySQL — once the pay date passes, that month is locked and never overwritten
-- Generates `gate.php` + `.htaccess` for FTP deployment; the PHP file serves reports straight from the DB with cookie auth
+- Archives a per-month HTML pay report in MySQL — once the pay date passes the month is locked and never overwritten
+- Generates `gate.php` + `.htaccess` for FTP deployment; the PHP file authenticates with a cookie and serves reports straight from the DB
 
 ## Running locally
 
 ```
-nix run . -- --dry-run --report /tmp/out/
+nix run . -- --dry-run
 ```
 
-`--dry-run` skips Google Calendar writes. `--report DIR` writes `gate.php` + `.htaccess` to the directory (or a plain `report.html` if `REPORT_PASSWORD` isn't set). Without `--save`, nothing touches the database.
+Skips all writes — just logs into Timegrip, connects to the DB and prints the timetable. Good for checking that everything is set up correctly.
 
 ```
-nix run . -- --report /tmp/out/ --save
+nix run . -- --report /tmp/out/
 ```
 
-Adds DB writes: shift changelog + period archive.
+Full run: syncs Google Calendar, updates the DB, and writes `gate.php` + `.htaccess` to the output directory. Use `--dry-run --report /tmp/out/` if you just want the report files without touching the calendar.
 
 ## Environment variables
 
@@ -39,12 +39,12 @@ Copy `.env.example` to `.env` and fill it in (`.env` is gitignored).
 | `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` / `GOOGLE_REFRESH_TOKEN` | Google Calendar OAuth2 |
 | `CALENDAR_NAME` | Name of the Google Calendar to sync into |
 | `REPORT_PASSWORD` / `REPORT_SALT` | Password and salt for the web report |
-| `SITE_LABEL` | Branding label shown on the login page |
-| `DB_HOST` / `DB_USER` / `DB_PASSWORD` / `DB_DATABASE` | MySQL (optional, needed for `--save`) |
+| `SITE_LABEL` | Branding shown on the report login page |
+| `DB_HOST` / `DB_USER` / `DB_PASSWORD` / `DB_DATABASE` | MySQL — required |
 | `SYNC_AHEAD_WEEKS` | How many weeks ahead to sync (default: 12) |
-| `SYNC_LOOKBACK_WEEKS` | How many weeks back to allow changes (default: 4) |
+| `SYNC_LOOKBACK_WEEKS` | How far back shifts can still be changed (default: 4) |
 
-Wage config (`HOURLY_RATE`, `EVENING_SUPPLEMENT`, `SATURDAY_SUPPLEMENT`, `TAX_PCT`, etc.) are **required** env vars — see `--help` for the full list or copy from `.env.example`.
+Wage config (`HOURLY_RATE`, `EVENING_SUPPLEMENT`, `TAX_PCT`, etc.) are all required — see `--help` for the full list or just copy `.env.example`.
 
 ## Building
 
@@ -54,18 +54,18 @@ Needs [Nix](https://nixos.org/download). Everything else is handled by the flake
 nix build
 ```
 
-## Database schema
+## Database
 
-Three tables, all created automatically on first `--save` run:
+MySQL is required. Tables are created automatically on the first run.
 
-- `shifts` — live snapshot of every known shift
-- `shift_changes` — immutable changelog (created/updated/deleted)
-- `sync_runs` — one row per execution with counts and a JSON array of change IDs
-- `pay_periods` — one row per pay month with structured aggregates + full HTML; `locked=1` once pay date has passed
+- `shifts` — live snapshot of every shift; gets updated every run so you always know what's current
+- `shift_changes` — immutable log of every created/updated/deleted event
+- `sync_runs` — one row per execution with counts and a reference to the changes it made
+- `pay_periods` — one row per pay month with aggregates and full HTML; locked once the pay date has passed
 
-> ## TODO 
-> - Notifications through webhooks to various services on schedule changes, or when nearing a shift 
-> - Visualisation of shift changes data, to easy be able to inspect when changes were made to the schedule and what changes
-> - Rework CLI application to work more generally with any TimeGrip/Timeplan instance
-> - Support for different calenders, Outlook, Apple Calender.
-> - .md report output format
+## TODO
+
+- Webhook notifications on schedule changes, or when a shift is coming up
+- Visualisation of the shift changes log
+- Support for other calendar backends (Outlook, Apple Calendar)
+- `.md` report output format
