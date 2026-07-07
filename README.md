@@ -1,8 +1,10 @@
 # timegrip-sync
 
-Pulls my work schedule from Timegrip and syncs it to Google Calendar. Also calculates estimated pay and publishes a password-protected report to [løn.emandersen.dk](http://løn.emandersen.dk).
+Designet to pull work schedules from Timegrip/Timeplan and sync it with google calender. Additionally it calculates estimated pay based on hourly wages and creates a report which can be automatically published to a web server to always be up to date with expected pay. Supports database storage to log changes in shifts.
 
-Runs automatically every morning via GitHub Actions.
+In this specific repo it is set to run every morning with Github Actions.
+
+!!Currently designed to work specifically with Salling Groups SSO login!!
 
 ## What it does
 
