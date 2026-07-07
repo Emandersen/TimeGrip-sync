@@ -20,13 +20,13 @@
 static const std::string VERSION       = "1.0.0";
 static const int         DEFAULT_WEEKS = 12;
 
-// PBKDF2-SHA256, 100 000 iterations, fixed salt → 64-char lowercase hex
-static std::string compute_pbkdf2_hex(const std::string& password) {
-    static const char salt[] = "";
+// PBKDF2-SHA256, 100 000 iterations → 64-char lowercase hex
+static std::string compute_pbkdf2_hex(const std::string& password,
+                                      const std::string& salt) {
     unsigned char out[32];
     PKCS5_PBKDF2_HMAC(password.c_str(), static_cast<int>(password.size()),
-                      reinterpret_cast<const unsigned char*>(salt),
-                      static_cast<int>(sizeof(salt) - 1),
+                      reinterpret_cast<const unsigned char*>(salt.c_str()),
+                      static_cast<int>(salt.size()),
                       100000, EVP_sha256(), 32, out);
     char hex[65];
     for (int i = 0; i < 32; ++i)
@@ -59,16 +59,32 @@ static void usage(const char* prog) {
         "  --help         Show this help\n"
         "\n"
         "Environment variables (set in .env or shell):\n"
+        "  TIMEGRIP_BASE_URL      Base URL of your Timegrip instance\n"
         "  SALLING_EMAIL          Timegrip login email\n"
         "  SALLING_PASSWORD       Timegrip login password\n"
         "  GOOGLE_CLIENT_ID       Google OAuth2 client ID\n"
         "  GOOGLE_CLIENT_SECRET   Google OAuth2 client secret\n"
         "  GOOGLE_REFRESH_TOKEN   OAuth2 refresh token (obtained on first run)\n"
+        "  CALENDAR_NAME          Google Calendar name to sync into\n"
         "\n"
         "  SYNC_AHEAD_WEEKS       Weeks ahead to sync (default: 12, overridden by --weeks)\n"
         "  SYNC_LOOKBACK_WEEKS    Weeks behind today that can be changed (default: 4)\n"
         "\n"
+        "  HOURLY_RATE            Base hourly rate (DKK)\n"
+        "  EVENING_SUPPLEMENT     Evening supplement (DKK/hr)\n"
+        "  SATURDAY_SUPPLEMENT    Saturday supplement (DKK/hr)\n"
+        "  SUNDAY_SUPPLEMENT      Sunday supplement (DKK/hr)\n"
+        "  AM_BIDRAG_PCT          AM-bidrag percentage\n"
+        "  TAX_PCT                Income tax percentage\n"
+        "  EMPLOYEE_PENSION_PCT   Employee pension percentage\n"
+        "  EMPLOYER_PENSION_PCT   Employer pension percentage\n"
+        "  ATP_DKK                ATP per pay period (DKK)\n"
+        "  KLUB_DKK               Union/club fee per pay period (DKK)\n"
+        "  FRITVALG_PCT           Fritvalg savings percentage\n"
+        "  FERIEFRI_PCT           Feriefri percentage\n"
+        "\n"
         "  REPORT_PASSWORD        Password for the web report (gate.php)\n"
+        "  REPORT_SALT            Salt used when hashing the report password\n"
         "\n"
         "  DB_HOST / DB_PORT / DB_USER / DB_PASSWORD / DB_DATABASE\n"
         "                         MySQL connection (used with --save)\n";
@@ -167,7 +183,8 @@ int main(int argc, char* argv[]) {
             std::string pbkdf2_hex;
             auto report_pw = get_env("REPORT_PASSWORD");
             if (!report_pw.empty())
-                pbkdf2_hex = compute_pbkdf2_hex(report_pw);
+                pbkdf2_hex = compute_pbkdf2_hex(report_pw,
+                                                require_env("REPORT_SALT"));
 
 #ifdef HAVE_MYSQL
             if (save_to_db && !get_env("DB_HOST").empty()) {
@@ -268,7 +285,7 @@ int main(int argc, char* argv[]) {
             get_env("GOOGLE_REFRESH_TOKEN"));
 
         auto calendar_id = get_or_create_calendar(tokens.access_token,
-                                                  CALENDAR_NAME);
+                                                  require_env("CALENDAR_NAME"));
 
         std::cout << "  Syncing events…\n";
         auto result = sync_calendar(tokens.access_token, calendar_id,

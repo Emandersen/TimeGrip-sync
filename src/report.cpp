@@ -11,10 +11,8 @@
 #include <stdexcept>
 
 PayConfig pay_config_from_env() {
-    auto get_d = [](const char* key, double def) -> double {
-        auto s = get_env(key);
-        if (s.empty()) return def;
-        try { return std::stod(s); } catch (...) { return def; }
+    auto req_d = [](const char* key) -> double {
+        return std::stod(require_env(key));
     };
     auto get_i = [](const char* key, int def) -> int {
         auto s = get_env(key);
@@ -22,19 +20,19 @@ PayConfig pay_config_from_env() {
         try { return std::stoi(s); } catch (...) { return def; }
     };
     PayConfig c;
-    c.hourly_rate          = get_d("HOURLY_RATE",          0.0);
-    c.evening_supplement   = get_d("EVENING_SUPPLEMENT",   0.0);
-    c.saturday_supplement  = get_d("SATURDAY_SUPPLEMENT",  0.0);
-    c.sunday_supplement    = get_d("SUNDAY_SUPPLEMENT",    0.0);
+    c.hourly_rate          = req_d("HOURLY_RATE");
+    c.evening_supplement   = req_d("EVENING_SUPPLEMENT");
+    c.saturday_supplement  = req_d("SATURDAY_SUPPLEMENT");
+    c.sunday_supplement    = req_d("SUNDAY_SUPPLEMENT");
     c.evening_cutoff_hour  = get_i("EVENING_CUTOFF_HOUR",  18);
-    c.am_bidrag_pct        = get_d("AM_BIDRAG_PCT",        8.0);
-    c.tax_pct              = get_d("TAX_PCT",              0.0);
-    c.employee_pension_pct = get_d("EMPLOYEE_PENSION_PCT", 0.0);
-    c.employer_pension_pct = get_d("EMPLOYER_PENSION_PCT", 0.0);
-    c.atp_dkk              = get_d("ATP_DKK",              0.0);
-    c.klub_dkk             = get_d("KLUB_DKK",             0.0);
-    c.fritvalg_pct         = get_d("FRITVALG_PCT",         0.0);
-    c.feriefri_pct         = get_d("FERIEFRI_PCT",         0.0);
+    c.am_bidrag_pct        = req_d("AM_BIDRAG_PCT");
+    c.tax_pct              = req_d("TAX_PCT");
+    c.employee_pension_pct = req_d("EMPLOYEE_PENSION_PCT");
+    c.employer_pension_pct = req_d("EMPLOYER_PENSION_PCT");
+    c.atp_dkk              = req_d("ATP_DKK");
+    c.klub_dkk             = req_d("KLUB_DKK");
+    c.fritvalg_pct         = req_d("FRITVALG_PCT");
+    c.feriefri_pct         = req_d("FERIEFRI_PCT");
     c.advance_notice_days  = get_i("ADVANCE_NOTICE_DAYS",  14);
     return c;
 }
@@ -648,6 +646,7 @@ void generate_gate_files(const std::string& out_dir,
         }
     };
     replace_all(php, "__HASH__",    pbkdf2_hash);
+    replace_all(php, "__SALT__",    get_env("REPORT_SALT"));
     replace_all(php, "__DB_HOST__", db_cfg.host);
     replace_all(php, "__DB_USER__", db_cfg.user);
     replace_all(php, "__DB_PASS__", db_cfg.password);

@@ -1,4 +1,5 @@
 #include "adfs.hpp"
+#include "env.hpp"
 #include <regex>
 #include <stdexcept>
 #include <string>
@@ -30,10 +31,11 @@ static std::string unescape_html(std::string s) {
 
 std::unique_ptr<HttpClient> adfs_login(const std::string& email,
                                        const std::string& password) {
+    const std::string base = require_env("TIMEGRIP_BASE_URL");
     auto session = std::make_unique<HttpClient>(/*follow_redirects=*/true);
 
-    auto r1 = session->get(TG_BASE + "/sso/auth/login",
-                           {{"returnUrl", TG_BASE + "/?SSOSuccessful"}});
+    auto r1 = session->get(base + "/sso/auth/login",
+                           {{"returnUrl", base + "/?SSOSuccessful"}});
 
     if (r1.final_url.find("sts.dsg.dk") == std::string::npos)
         throw std::runtime_error("Expected ADFS redirect, got: " + r1.final_url);
@@ -79,7 +81,7 @@ std::unique_ptr<HttpClient> adfs_login(const std::string& email,
             relay_state = m[1].str();
     }
 
-    std::string acs_url = TG_BASE + "/sso/Saml/AssertionConsumerService";
+    std::string acs_url = base + "/sso/Saml/AssertionConsumerService";
     {
         std::regex re(R"(<form[^>]+action=["']([^"']+)["'])");
         std::smatch m;
@@ -92,7 +94,7 @@ std::unique_ptr<HttpClient> adfs_login(const std::string& email,
         {"RelayState",   relay_state},
     });
 
-    if (!is_authenticated(*session, TG_BASE))
+    if (!is_authenticated(*session, base))
         throw std::runtime_error("Session check failed after ADFS auth");
 
     return session;
