@@ -52,9 +52,8 @@ static void usage(const char* prog) {
         "\n"
         "Options:\n"
         "  --weeks N      Weeks ahead to sync (default: " << DEFAULT_WEEKS << ")\n"
-        "  --dry-run      Fetch and display shifts without writing to calendar\n"
+        "  --dry-run      Fetch and display shifts without writing to calendar or DB\n"
         "  --report DIR   Generate pay report files into directory DIR\n"
-        "  --save         Write shift tracking and period archive to DB\n"
         "  --version      Print version and exit\n"
         "  --help         Show this help\n"
         "\n"
@@ -87,7 +86,7 @@ static void usage(const char* prog) {
         "  REPORT_SALT            Salt used when hashing the report password\n"
         "\n"
         "  DB_HOST / DB_PORT / DB_USER / DB_PASSWORD / DB_DATABASE\n"
-        "                         MySQL connection (used with --save)\n";
+        "                         MySQL connection (required)\n";
 }
 
 static std::string weeks_offset_str(int weeks) {
@@ -107,7 +106,6 @@ int main(int argc, char* argv[]) {
     int         weeks          = DEFAULT_WEEKS;
     bool        dry_run        = false;
     bool        weeks_from_cli = false;
-    bool        save_to_db     = false;
     std::string report_dir;
 
     for (int i = 1; i < argc; ++i) {
@@ -115,7 +113,6 @@ int main(int argc, char* argv[]) {
         if (arg == "--help" || arg == "-h") { usage(argv[0]); return 0; }
         if (arg == "--version")             { std::cout << VERSION << "\n"; return 0; }
         if (arg == "--dry-run")             { dry_run = true; continue; }
-        if (arg == "--save")                { save_to_db = true; continue; }
         if (arg == "--weeks" && i + 1 < argc) {
             weeks = std::stoi(argv[++i]);
             if (weeks < 1 || weeks > 52) {
@@ -175,6 +172,17 @@ int main(int argc, char* argv[]) {
 
         auto cfg = pay_config_from_env();
 
+        std::cout << "\nDatabase:\n  Connecting…\n";
+        MySQLDatabase db(db_config_from_env());
+        db.connect();
+        ShiftTracker  tracker(db);
+        PeriodArchive archive(db);
+        tracker.ensure_schema();
+        archive.ensure_schema();
+
+        auto snapshot = tracker.fetch_snapshot(from_date, to_date);
+        std::cout << "  " << snapshot.size() << " shift(s) in snapshot\n";
+
         auto do_report = [&]() {
             if (report_dir.empty()) return;
 
@@ -187,38 +195,26 @@ int main(int argc, char* argv[]) {
                 pbkdf2_hex = compute_pbkdf2_hex(report_pw,
                                                 require_env("REPORT_SALT"));
 
-#ifdef HAVE_MYSQL
-            if (save_to_db && !get_env("DB_HOST").empty()) {
-                try {
-                    MySQLDatabase db(db_config_from_env());
-                    db.connect();
-                    PeriodArchive archive(db);
-                    archive.ensure_schema();
-
-                    int td, tmo, ty;
-                    today_dmy(td, tmo, ty);
-
-                    int saved = 0, skipped = 0;
-                    for (auto& pd : periods) {
-                        if (archive.is_locked(pd.pay_month, pd.pay_year)) {
-                            ++skipped;
-                            continue;
-                        }
-                        bool lock = (ty > pd.pay_year)
-                                 || (ty == pd.pay_year && tmo > pd.pay_month)
-                                 || (ty == pd.pay_year && tmo == pd.pay_month
-                                     && td >= days_in_month(pd.pay_month, pd.pay_year));
-                        archive.upsert_period(pd, lock);
-                        ++saved;
+            if (!dry_run) {
+                int td, tmo, ty;
+                today_dmy(td, tmo, ty);
+                int saved = 0, skipped = 0;
+                for (auto& pd : periods) {
+                    if (archive.is_locked(pd.pay_month, pd.pay_year)) {
+                        ++skipped;
+                        continue;
                     }
-                    std::cout << "  " << saved << " period(s) archived";
-                    if (skipped) std::cout << ", " << skipped << " locked/skipped";
-                    std::cout << "\n";
-                } catch (const std::exception& e) {
-                    std::cerr << "  DB warning (period archive): " << e.what() << "\n";
+                    bool lock = (ty > pd.pay_year)
+                             || (ty == pd.pay_year && tmo > pd.pay_month)
+                             || (ty == pd.pay_year && tmo == pd.pay_month
+                                 && td >= days_in_month(pd.pay_month, pd.pay_year));
+                    archive.upsert_period(pd, lock);
+                    ++saved;
                 }
+                std::cout << "  " << saved << " period(s) archived";
+                if (skipped) std::cout << ", " << skipped << " locked/skipped";
+                std::cout << "\n";
             }
-#endif
 
             std::filesystem::create_directories(report_dir);
 
@@ -291,7 +287,7 @@ int main(int argc, char* argv[]) {
         std::cout << "  Syncing events…\n";
         auto result = sync_calendar(tokens.access_token, calendar_id,
                                     timetable, func_map,
-                                    from_date, to_date, from_date);
+                                    snapshot, from_date);
 
         std::cout << "\n✓ Done — "
                   << result.created   << " created · "
@@ -301,31 +297,15 @@ int main(int argc, char* argv[]) {
 
         do_report();
 
-#ifdef HAVE_MYSQL
-        if (save_to_db && !get_env("DB_HOST").empty()) {
-            std::cout << "\nDatabase:\n";
-            try {
-                MySQLDatabase db(db_config_from_env());
-                db.connect();
-                ShiftTracker tracker(db);
-                tracker.ensure_schema();
-
-                auto run_id    = tracker.begin_sync_run(total_shifts);
-                auto change_ids = tracker.apply_changes(result.changes);
-                tracker.finish_sync_run(run_id, true,
-                                        result.created,
-                                        result.updated,
-                                        result.deleted,
-                                        change_ids);
-
-                std::cout << "  " << result.changes.size()
-                          << " change(s) recorded (run #"
-                          << run_id << ")\n";
-            } catch (const std::exception& e) {
-                std::cerr << "  DB warning: " << e.what() << "\n";
-            }
-        }
-#endif
+        auto run_id     = tracker.begin_sync_run(total_shifts);
+        auto change_ids = tracker.apply_changes(result.changes);
+        tracker.finish_sync_run(run_id, true,
+                                result.created,
+                                result.updated,
+                                result.deleted,
+                                change_ids);
+        std::cout << "\nDatabase: " << change_ids.size()
+                  << " change(s) recorded (run #" << run_id << ")\n";
 
     } catch (const HttpError& e) {
         std::cerr << "HTTP error " << e.status << ": " << e.what() << "\n";

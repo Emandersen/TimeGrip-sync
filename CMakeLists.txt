@@ -9,17 +9,8 @@ set(CMAKE_INSTALL_RPATH_USE_LINK_PATH TRUE)
 find_package(CURL REQUIRED)
 find_package(nlohmann_json REQUIRED)
 find_package(OpenSSL REQUIRED)
-
-# MySQL — optional, enabled when libmysqlclient is found
-find_package(PkgConfig QUIET)
-set(HAVE_MYSQL OFF)
-if(PkgConfig_FOUND)
-    pkg_check_modules(MYSQLCLIENT QUIET mysqlclient)
-    if(MYSQLCLIENT_FOUND)
-        set(HAVE_MYSQL ON)
-        message(STATUS "MySQL client found — database support enabled")
-    endif()
-endif()
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(MYSQLCLIENT REQUIRED mysqlclient)
 
 add_executable(timegrip-sync
     src/main.cpp
@@ -31,22 +22,18 @@ add_executable(timegrip-sync
     src/report.cpp
 )
 
+target_include_directories(timegrip-sync PRIVATE ${MYSQLCLIENT_INCLUDE_DIRS})
+target_link_directories(timegrip-sync PRIVATE ${MYSQLCLIENT_LIBRARY_DIRS})
 target_link_libraries(timegrip-sync
     PRIVATE
         CURL::libcurl
         nlohmann_json::nlohmann_json
         OpenSSL::Crypto
+        ${MYSQLCLIENT_LIBRARIES}
 )
 
 target_compile_options(timegrip-sync PRIVATE
     -Wall -Wextra -Wpedantic
 )
-
-if(HAVE_MYSQL)
-    target_compile_definitions(timegrip-sync PRIVATE HAVE_MYSQL)
-    target_include_directories(timegrip-sync PRIVATE ${MYSQLCLIENT_INCLUDE_DIRS})
-    target_link_directories(timegrip-sync PRIVATE ${MYSQLCLIENT_LIBRARY_DIRS})
-    target_link_libraries(timegrip-sync PRIVATE ${MYSQLCLIENT_LIBRARIES})
-endif()
 
 install(TARGETS timegrip-sync DESTINATION bin)

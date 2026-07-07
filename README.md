@@ -61,7 +61,7 @@ Three tables, all created automatically on first `--save` run:
 - `shifts` — live snapshot of every known shift
 - `shift_changes` — immutable changelog (created/updated/deleted)
 - `sync_runs` — one row per execution with counts and a JSON array of change IDs
-- `loen_periods` — one row per pay month with structured aggregates + full HTML; `locked=1` once pay date has passed
+- `pay_periods` — one row per pay month with structured aggregates + full HTML; `locked=1` once pay date has passed
 
 > ## TODO 
 > - Notifications through webhooks to various services on schedule changes, or when nearing a shift 

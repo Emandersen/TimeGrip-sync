@@ -1,7 +1,9 @@
 #pragma once
 #include "http.hpp"
 #include "timegrip.hpp"
+#include <map>
 #include <string>
+#include <vector>
 
 struct GoogleTokens {
     std::string access_token;
@@ -20,8 +22,8 @@ struct CalendarEvent {
     std::string id;
     std::string summary;
     std::string description;
-    std::string start;   // dateTime or date
-    std::string end;     // dateTime or date
+    std::string start;
+    std::string end;
     bool        all_day = false;
     std::string timegrip_id;
 };
@@ -31,8 +33,17 @@ std::vector<CalendarEvent> fetch_managed_events(const std::string& access_token,
                                                 const std::string& from_date,
                                                 const std::string& to_date);
 
+// DB snapshot of a single synced shift.
+struct ShiftSnapshot {
+    std::string gcal_event_id;
+    std::string summary;
+    std::string start;
+    std::string end;
+    bool        all_day = false;
+};
+
 struct ShiftChange {
-    enum class Type { Created, Updated, Deleted };
+    enum class Type { Created, Updated, Deleted, Unchanged };
     Type        type;
     std::string timegrip_id;
     std::string gcal_event_id;
@@ -60,6 +71,5 @@ SyncResult sync_calendar(const std::string& access_token,
                          const std::string& calendar_id,
                          const Timetable&   timetable,
                          const FunctionMap& func_map,
-                         const std::string& from_date,
-                         const std::string& to_date,
+                         const std::map<std::string, ShiftSnapshot>& snapshot,
                          const std::string& protect_before = "");

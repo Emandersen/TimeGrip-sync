@@ -384,23 +384,24 @@ static std::string norm_dt(const std::string& dt) {
     return dt;
 }
 
-static bool events_differ(const CalendarEvent& existing, const json& desired) {
-    if (existing.summary != desired.value("summary", "")) return true;
-    if (existing.description != desired.value("description", "")) return true;
+static std::pair<std::string,std::string> extract_desired_dt(const json& body) {
+    std::string s, e;
+    if (body.contains("start"))
+        s = body["start"].contains("dateTime")
+            ? body["start"]["dateTime"].get<std::string>()
+            : body["start"].value("date", "");
+    if (body.contains("end"))
+        e = body["end"].contains("dateTime")
+            ? body["end"]["dateTime"].get<std::string>()
+            : body["end"].value("date", "");
+    return {s, e};
+}
 
-    std::string d_start = desired.contains("start")
-        ? (desired["start"].contains("dateTime")
-               ? desired["start"]["dateTime"].get<std::string>()
-               : desired["start"].value("date", ""))
-        : "";
-    std::string d_end = desired.contains("end")
-        ? (desired["end"].contains("dateTime")
-               ? desired["end"]["dateTime"].get<std::string>()
-               : desired["end"].value("date", ""))
-        : "";
-
-    if (norm_dt(existing.start) != norm_dt(d_start)) return true;
-    if (norm_dt(existing.end)   != norm_dt(d_end))   return true;
+static bool snapshot_differs(const ShiftSnapshot& snap, const json& desired) {
+    if (snap.summary != desired.value("summary", "")) return true;
+    auto [d_start, d_end] = extract_desired_dt(desired);
+    if (norm_dt(snap.start) != norm_dt(d_start)) return true;
+    if (norm_dt(snap.end)   != norm_dt(d_end))   return true;
     return false;
 }
 
@@ -409,20 +410,18 @@ SyncResult sync_calendar(const std::string& access_token,
                          const std::string& calendar_id,
                          const Timetable&   timetable,
                          const FunctionMap& func_map,
-                         const std::string& from_date,
-                         const std::string& to_date,
+                         const std::map<std::string, ShiftSnapshot>& snapshot,
                          const std::string& protect_before) {
     GCalClient gc(access_token);
+    std::string cal_path = CALENDAR_API + "/calendars/" + calendar_id + "/events";
 
     std::map<std::string, json> desired;
-
     for (auto& week : timetable.weeks) {
         for (auto& day : week.days) {
             std::string day_date = parse_date(day.date);
             for (auto& shift : day.shifts) {
                 std::string caption_lc = shift.has_absence
                     ? to_lower(shift.absence.type_caption) : "";
-
                 if (contains_any(caption_lc, SKIP_TYPES)) continue;
                 bool is_absence_event = shift.has_absence &&
                     (!shift.worktime_id || shift.duration == 0 ||
@@ -440,44 +439,21 @@ SyncResult sync_calendar(const std::string& access_token,
                 } else {
                     continue;
                 }
-
                 desired[tid] = build_event_body(shift, day_date, func_map, tid);
             }
         }
     }
 
-    auto existing_vec = fetch_managed_events(access_token, calendar_id,
-                                             from_date, to_date);
     SyncResult result;
-    std::string cal_path = CALENDAR_API + "/calendars/" + calendar_id + "/events";
-
-    std::map<std::string, CalendarEvent> existing;
-    for (auto& ev : existing_vec) {
-        if (existing.count(ev.timegrip_id)) {
-            gc.del(cal_path + "/" + ev.id);
-            ++result.deleted;
-        } else {
-            existing[ev.timegrip_id] = ev;
-        }
-    }
-
-    auto extract_dt = [](const json& body, bool all_day) -> std::pair<std::string,std::string> {
-        std::string s, e;
-        if (body.contains("start"))
-            s = all_day ? body["start"].value("date","") : body["start"].value("dateTime","");
-        if (body.contains("end"))
-            e = all_day ? body["end"].value("date","")   : body["end"].value("dateTime","");
-        return {s, e};
-    };
 
     for (auto& [tid, body] : desired) {
         bool all_day = body.contains("start") && body["start"].contains("date");
+        auto [s, e] = extract_desired_dt(body);
 
-        if (existing.find(tid) == existing.end()) {
+        auto it = snapshot.find(tid);
+        if (it == snapshot.end() || it->second.gcal_event_id.empty()) {
             auto resp = gc.post(cal_path, body);
             ++result.created;
-
-            auto [s, e] = extract_dt(body, all_day);
             result.changes.push_back({
                 ShiftChange::Type::Created,
                 tid,
@@ -485,47 +461,63 @@ SyncResult sync_calendar(const std::string& access_token,
                 body.value("summary", ""), s, e, all_day,
                 {}, {}, {}
             });
-        } else if (events_differ(existing.at(tid), body)) {
-            auto& ev = existing.at(tid);
+        } else if (snapshot_differs(it->second, body)) {
+            const auto& snap = it->second;
             if (!protect_before.empty() &&
-                    norm_dt(ev.start).substr(0, 10) < protect_before) {
+                    norm_dt(snap.start).substr(0, 10) < protect_before) {
                 ++result.unchanged;
+                result.changes.push_back({
+                    ShiftChange::Type::Unchanged,
+                    tid, snap.gcal_event_id,
+                    snap.summary, snap.start, snap.end, snap.all_day,
+                    {}, {}, {}
+                });
                 continue;
             }
             auto patched = body;
-            patched["id"] = ev.id;
-            gc.patch(cal_path + "/" + ev.id, patched);
+            patched["id"] = snap.gcal_event_id;
+            gc.patch(cal_path + "/" + snap.gcal_event_id, patched);
             ++result.updated;
-
-            auto [s, e] = extract_dt(body, all_day);
             result.changes.push_back({
                 ShiftChange::Type::Updated,
-                tid, ev.id,
+                tid, snap.gcal_event_id,
                 body.value("summary", ""), s, e, all_day,
-                ev.summary, ev.start, ev.end
+                snap.summary, snap.start, snap.end
             });
         } else {
+            const auto& snap = it->second;
             ++result.unchanged;
+            result.changes.push_back({
+                ShiftChange::Type::Unchanged,
+                tid, snap.gcal_event_id,
+                snap.summary, snap.start, snap.end, snap.all_day,
+                {}, {}, {}
+            });
         }
     }
 
-    for (auto& [tid, ev] : existing) {
-        if (desired.find(tid) == desired.end()) {
-            if (!protect_before.empty() &&
-                    norm_dt(ev.start).substr(0, 10) < protect_before) {
-                ++result.unchanged;
-                continue;
-            }
-            gc.del(cal_path + "/" + ev.id);
-            ++result.deleted;
-
+    for (auto& [tid, snap] : snapshot) {
+        if (desired.find(tid) != desired.end()) continue;
+        if (!protect_before.empty() &&
+                norm_dt(snap.start).substr(0, 10) < protect_before) {
+            ++result.unchanged;
             result.changes.push_back({
-                ShiftChange::Type::Deleted,
-                tid, ev.id,
-                {}, {}, {}, ev.all_day,
-                ev.summary, ev.start, ev.end
+                ShiftChange::Type::Unchanged,
+                tid, snap.gcal_event_id,
+                snap.summary, snap.start, snap.end, snap.all_day,
+                {}, {}, {}
             });
+            continue;
         }
+        if (!snap.gcal_event_id.empty())
+            gc.del(cal_path + "/" + snap.gcal_event_id);
+        ++result.deleted;
+        result.changes.push_back({
+            ShiftChange::Type::Deleted,
+            tid, snap.gcal_event_id,
+            {}, {}, {}, snap.all_day,
+            snap.summary, snap.start, snap.end
+        });
     }
 
     return result;

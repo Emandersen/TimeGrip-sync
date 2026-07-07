@@ -12,8 +12,6 @@ DbConfig db_config_from_env() {
     };
 }
 
-#ifdef HAVE_MYSQL
-
 void MySQLDatabase::connect() {
     conn_ = mysql_init(nullptr);
     if (!conn_) throw std::runtime_error("mysql_init failed");
@@ -145,6 +143,25 @@ void ShiftTracker::ensure_schema() {
     );
 }
 
+std::map<std::string, ShiftSnapshot> ShiftTracker::fetch_snapshot(
+        const std::string& from_date, const std::string& to_date) {
+    auto rows = db_.query(
+        "SELECT timegrip_id, gcal_event_id, summary, start_dt, end_dt, all_day"
+        " FROM shifts WHERE start_dt >= ? AND start_dt <= ?",
+        {from_date, to_date + "T23:59:59"});
+    std::map<std::string, ShiftSnapshot> snap;
+    for (auto& r : rows) {
+        ShiftSnapshot s;
+        s.gcal_event_id = r.at("gcal_event_id");
+        s.summary       = r.at("summary");
+        s.start         = r.at("start_dt");
+        s.end           = r.at("end_dt");
+        s.all_day       = r.at("all_day") == "1";
+        snap[r.at("timegrip_id")] = s;
+    }
+    return snap;
+}
+
 int64_t ShiftTracker::begin_sync_run(int total_shifts) {
     db_.execute(
         "INSERT INTO sync_runs (total_shifts) VALUES (?)",
@@ -159,11 +176,18 @@ std::vector<int64_t> ShiftTracker::apply_changes(
     ids.reserve(changes.size());
 
     for (auto& ch : changes) {
+        if (ch.type == ShiftChange::Type::Unchanged) {
+            db_.execute("UPDATE shifts SET last_seen_at = NOW() WHERE timegrip_id = ?",
+                        {ch.timegrip_id});
+            continue;
+        }
+
         std::string type_str;
         switch (ch.type) {
-            case ShiftChange::Type::Created: type_str = "created"; break;
-            case ShiftChange::Type::Updated: type_str = "updated"; break;
-            case ShiftChange::Type::Deleted: type_str = "deleted"; break;
+            case ShiftChange::Type::Created:   type_str = "created"; break;
+            case ShiftChange::Type::Updated:   type_str = "updated"; break;
+            case ShiftChange::Type::Deleted:   type_str = "deleted"; break;
+            case ShiftChange::Type::Unchanged: break;
         }
 
         if (ch.type != ShiftChange::Type::Deleted) {
@@ -227,7 +251,7 @@ void ShiftTracker::finish_sync_run(int64_t run_id, bool success,
 
 void PeriodArchive::ensure_schema() {
     db_.execute(
-        "CREATE TABLE IF NOT EXISTS loen_periods ("
+        "CREATE TABLE IF NOT EXISTS pay_periods ("
         "  id                INT          NOT NULL AUTO_INCREMENT PRIMARY KEY,"
         "  period_start      DATE         NOT NULL,"
         "  period_end        DATE         NOT NULL,"
@@ -253,7 +277,7 @@ bool PeriodArchive::is_locked(int pay_month, int pay_year) {
     char buf[16];
     snprintf(buf, sizeof(buf), "%04d-%02d-16", sy, sm);
     auto rows = db_.query(
-        "SELECT locked FROM loen_periods WHERE period_start = ? LIMIT 1",
+        "SELECT locked FROM pay_periods WHERE period_start = ? LIMIT 1",
         {buf}
     );
     return !rows.empty() && rows[0]["locked"] == "1";
@@ -275,7 +299,7 @@ void PeriodArchive::upsert_period(const PeriodData& d, bool lock) {
     };
 
     db_.execute(
-        "INSERT INTO loen_periods"
+        "INSERT INTO pay_periods"
         "  (period_start, period_end, pay_date, shift_count, total_hours,"
         "   brutto_dkk, net_estimated_dkk, fritvalg_dkk, feriefri_dkk,"
         "   html_content, locked)"
@@ -302,5 +326,3 @@ void PeriodArchive::upsert_period(const PeriodData& d, bool lock) {
          lock ? "1" : "0"}
     );
 }
-
-#endif  // HAVE_MYSQL

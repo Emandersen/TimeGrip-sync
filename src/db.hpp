@@ -1,6 +1,8 @@
 #pragma once
+#include "gcal.hpp"
 #include "period.hpp"
 #include <map>
+#include <mysql/mysql.h>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -34,11 +36,6 @@ struct DbConfig {
     std::string database;
 };
 
-#ifdef HAVE_MYSQL
-
-#include "gcal.hpp"
-#include <mysql/mysql.h>
-
 class MySQLDatabase : public Database {
 public:
     explicit MySQLDatabase(DbConfig cfg) : cfg_(std::move(cfg)) {}
@@ -65,6 +62,8 @@ public:
     explicit ShiftTracker(MySQLDatabase& db) : db_(db) {}
 
     void ensure_schema();
+    std::map<std::string, ShiftSnapshot> fetch_snapshot(const std::string& from_date,
+                                                        const std::string& to_date);
     int64_t begin_sync_run(int total_shifts);
     std::vector<int64_t> apply_changes(const std::vector<ShiftChange>& changes);
     void finish_sync_run(int64_t run_id, bool success,
@@ -87,7 +86,5 @@ public:
 private:
     MySQLDatabase& db_;
 };
-
-#endif  // HAVE_MYSQL
 
 DbConfig db_config_from_env();

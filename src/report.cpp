@@ -519,7 +519,7 @@ try {
 if (isset($_GET['m'])) {
     $ps = $_GET['m'];
     if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $ps)) { http_response_code(400); exit; }
-    $stmt = $pdo->prepare('SELECT html_content FROM loen_periods WHERE period_start = ? LIMIT 1');
+    $stmt = $pdo->prepare('SELECT html_content FROM pay_periods WHERE period_start = ? LIMIT 1');
     $stmt->execute([$ps]);
     $row = $stmt->fetch();
     if (!$row) { http_response_code(404); echo '<p style="font-family:sans-serif;padding:2rem">Periode ikke fundet.</p>'; exit; }
@@ -530,7 +530,7 @@ if (isset($_GET['m'])) {
 $stmt = $pdo->query(
     'SELECT period_start, period_end, pay_date, shift_count,'
     .' total_hours, brutto_dkk, net_estimated_dkk, locked'
-    .' FROM loen_periods ORDER BY pay_date ASC'
+    .' FROM pay_periods ORDER BY pay_date ASC'
 );
 $rows = $stmt->fetchAll();
 $today = date('Y-m-d');
