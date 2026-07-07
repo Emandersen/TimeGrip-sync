@@ -4,7 +4,7 @@ Designet to pull work schedules from Timegrip/Timeplan and sync it with google c
 
 In this specific repo it is set to run every morning with Github Actions.
 
-> Currently designed to work specifically with Salling Groups SSO login
+> Requires a Timegrip/Timeplan instance with ADFS SSO (SAML). The base URL and ADFS host are configured via environment variables.
 
 ## What it does
 
@@ -34,14 +34,17 @@ Copy `.env.example` to `.env` and fill it in (`.env` is gitignored).
 
 | Variable | What it's for |
 |---|---|
-| `SALLING_EMAIL` / `SALLING_PASSWORD` | Timegrip login |
+| `TIMEGRIP_BASE_URL` | Base URL of your Timegrip instance |
+| `SALLING_EMAIL` / `SALLING_PASSWORD` | Timegrip login credentials |
 | `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` / `GOOGLE_REFRESH_TOKEN` | Google Calendar OAuth2 |
-| `REPORT_PASSWORD` | Password for the web report |
+| `CALENDAR_NAME` | Name of the Google Calendar to sync into |
+| `REPORT_PASSWORD` / `REPORT_SALT` | Password and salt for the web report |
+| `SITE_LABEL` | Branding label shown on the login page |
 | `DB_HOST` / `DB_USER` / `DB_PASSWORD` / `DB_DATABASE` | MySQL (optional, needed for `--save`) |
 | `SYNC_AHEAD_WEEKS` | How many weeks ahead to sync (default: 12) |
 | `SYNC_LOOKBACK_WEEKS` | How many weeks back to allow changes (default: 4) |
 
-Wage config (`HOURLY_RATE`, `EVENING_SUPPLEMENT`, `SATURDAY_SUPPLEMENT`, etc.) can also be set as env vars — see `--help` for the full list.
+Wage config (`HOURLY_RATE`, `EVENING_SUPPLEMENT`, `SATURDAY_SUPPLEMENT`, `TAX_PCT`, etc.) are **required** env vars — see `--help` for the full list or copy from `.env.example`.
 
 ## Building
 
@@ -63,6 +66,6 @@ Three tables, all created automatically on first `--save` run:
 > ## TODO 
 > - Notifications through webhooks to various services on schedule changes, or when nearing a shift 
 > - Visualisation of shift changes data, to easy be able to inspect when changes were made to the schedule and what changes
-> - Rework CLI application to be less Salling specific, thus to work more generally with TimeGrip
+> - Rework CLI application to work more generally with any TimeGrip/Timeplan instance
 > - Support for different calenders, Outlook, Apple Calender.
 > - .md report output format
