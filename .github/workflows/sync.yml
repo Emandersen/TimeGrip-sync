@@ -55,7 +55,7 @@ jobs:
           FERIEFRI_PCT:         ${{ vars.FERIEFRI_PCT }}
         run: |
           mkdir -p report
-          nix run . -- --report report/ --save
+          nix run . -- --report report/
 
       # Check whether FTP is configured
       - name: Check FTP config
