@@ -49,7 +49,7 @@ button:active{background:#0d1757}
 <div class="card">
   <div class="brand">
     <h1>Lønoversigt</h1>
-    <p>emandersen.dk</p>
+    <p>__SITE_LABEL__</p>
   </div>
   <?php if ($error): ?>
   <div class="err">Forkert adgangskode — prøv igen</div>

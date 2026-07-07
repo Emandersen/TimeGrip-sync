@@ -37,11 +37,19 @@ std::unique_ptr<HttpClient> adfs_login(const std::string& email,
     auto r1 = session->get(base + "/sso/auth/login",
                            {{"returnUrl", base + "/?SSOSuccessful"}});
 
-    if (r1.final_url.find("sts.dsg.dk") == std::string::npos)
+    // Derive the ADFS origin (scheme://host) from where we were redirected.
+    auto adfs_origin = [](const std::string& url) {
+        auto s = url.find("://");
+        if (s == std::string::npos) return url;
+        auto e = url.find('/', s + 3);
+        return e == std::string::npos ? url : url.substr(0, e);
+    }(r1.final_url);
+
+    if (adfs_origin.empty() || adfs_origin == base)
         throw std::runtime_error("Expected ADFS redirect, got: " + r1.final_url);
 
     std::string form_action =
-        "https://sts.dsg.dk" +
+        adfs_origin +
         unescape_html(extract(r1.body,
                               "action=\"(/adfs/ls/[^\"]+)\"",
                               "Could not find ADFS form action"));

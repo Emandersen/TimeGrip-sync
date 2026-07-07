@@ -159,8 +159,9 @@ int main(int argc, char* argv[]) {
         }
 
         std::cout << "  Fetching timetable…\n";
-        auto timetable = fetch_timetable(*session, weeks, lookback);
-        auto func_map  = fetch_function_names(*session);
+        const std::string base_url = require_env("TIMEGRIP_BASE_URL");
+        auto timetable = fetch_timetable(*session, base_url, weeks, lookback);
+        auto func_map  = fetch_function_names(*session, base_url);
 
         int total_shifts = 0;
         for (auto& w : timetable.weeks)

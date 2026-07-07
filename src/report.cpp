@@ -318,7 +318,7 @@ static std::string render_period_section(
       << "<tr><td>A-skat (" << cfg.tax_pct << "&#37;, bikort)</td>"
       <<     "<td>\xe2\x88\x92" << fmt_dkk(tax) << "</td></tr>\n"
       << "<tr><td>ATP</td><td>\xe2\x88\x92" << fmt_dkk(cfg.atp_dkk) << "</td></tr>\n"
-      << "<tr><td>Klub Scottie</td><td>\xe2\x88\x92" << fmt_dkk(cfg.klub_dkk) << "</td></tr>\n"
+      << "<tr><td>Fagforeningskontingent</td><td>\xe2\x88\x92" << fmt_dkk(cfg.klub_dkk) << "</td></tr>\n"
       << "<tr class=\"sep\"><td>Estimeret udbetaling</td><td>" << fmt_dkk(net) << "</td></tr>\n"
       << "<tr class=\"info\"><td>Fritvalgsopsparing (" << cfg.fritvalg_pct << "&#37;, udbetales separat)</td>"
       <<     "<td>+" << fmt_dkk(fritvalg) << "</td></tr>\n"
@@ -481,7 +481,7 @@ button:active{background:#0d1757}
 <div class="card">
   <div class="brand">
     <h1>Lønoversigt</h1>
-    <p>emandersen.dk</p>
+    <p>__SITE_LABEL__</p>
   </div>
   <?php if ($error): ?>
   <div class="err">Forkert adgangskode — prøv igen</div>
@@ -645,8 +645,9 @@ void generate_gate_files(const std::string& out_dir,
             pos += to.size();
         }
     };
-    replace_all(php, "__HASH__",    pbkdf2_hash);
-    replace_all(php, "__SALT__",    get_env("REPORT_SALT"));
+    replace_all(php, "__HASH__",       pbkdf2_hash);
+    replace_all(php, "__SALT__",       get_env("REPORT_SALT"));
+    replace_all(php, "__SITE_LABEL__", get_env("SITE_LABEL"));
     replace_all(php, "__DB_HOST__", db_cfg.host);
     replace_all(php, "__DB_USER__", db_cfg.user);
     replace_all(php, "__DB_PASS__", db_cfg.password);

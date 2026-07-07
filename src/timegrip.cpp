@@ -42,8 +42,9 @@ static std::string iso_now(int offset_weeks = 0) {
     return buf;
 }
 
-Timetable fetch_timetable(HttpClient& session, int weeks_ahead, int weeks_back) {
-    auto r = session.get(TG_BASE_URL + "/webapi/?func=MyWorktimes", {
+Timetable fetch_timetable(HttpClient& session, const std::string& base_url,
+                          int weeks_ahead, int weeks_back) {
+    auto r = session.get(base_url + "/webapi/?func=MyWorktimes", {
         {"from_date", iso_now(-weeks_back)},
         {"to_date",   iso_now(weeks_ahead)},
     });
@@ -101,8 +102,8 @@ Timetable fetch_timetable(HttpClient& session, int weeks_ahead, int weeks_back) 
     return tt;
 }
 
-FunctionMap fetch_function_names(HttpClient& session) {
-    auto r = session.get(TG_BASE_URL + "/webapi/?func=LoadSetting");
+FunctionMap fetch_function_names(HttpClient& session, const std::string& base_url) {
+    auto r = session.get(base_url + "/webapi/?func=LoadSetting");
     if (r.status != 200)
         throw HttpError(r.status, "LoadSetting returned " + std::to_string(r.status));
 
