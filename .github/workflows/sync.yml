@@ -3,6 +3,7 @@ name: Sync Timegrip → Google Calendar
 on:
   schedule:
     - cron: "0 5 * * *"   # 05:00 UTC = 06:00/07:00 Copenhagen
+    - cron: "0 15 * * *"  # 15:00 UTC = 16:00/17:00 Copenhagen
   workflow_dispatch:        # manual trigger from the Actions tab
 
 jobs:
