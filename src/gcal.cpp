@@ -1,4 +1,5 @@
 #include "gcal.hpp"
+#include "period.hpp"
 #include <algorithm>
 #include <cstring>
 #include <curl/curl.h>
@@ -7,6 +8,7 @@
 #include <netinet/in.h>
 #include <nlohmann/json.hpp>
 #include <regex>
+#include <set>
 #include <stdexcept>
 #include <sys/socket.h>
 #include <unistd.h>
@@ -48,13 +50,21 @@ private:
 
         std::string full_url = url;
         if (!params.empty()) {
+            CURL* enc = curl_easy_init();
             full_url += '?';
             bool first = true;
             for (auto& [k, v] : params) {
                 if (!first) full_url += '&';
-                full_url += k + "=" + v;
+                if (enc) {
+                    char* ev = curl_easy_escape(enc, v.c_str(), static_cast<int>(v.size()));
+                    full_url += k + "=" + std::string(ev);
+                    curl_free(ev);
+                } else {
+                    full_url += k + "=" + v;
+                }
                 first = false;
             }
+            if (enc) curl_easy_cleanup(enc);
         }
 
         Headers hdrs = {{"Authorization", "Bearer " + token_}};
@@ -255,7 +265,7 @@ std::vector<CalendarEvent> fetch_managed_events(const std::string& access_token,
 
     do {
         Params params = {
-            {"timeMin",                 from_date + "T00:00:00%2B02:00"},
+            {"timeMin",                 from_date + "T00:00:00Z"},
             {"timeMax",                 to_date   + "T23:59:59Z"},
             {"privateExtendedProperty", "source=timegrip"},
             {"singleEvents",            "true"},
@@ -334,6 +344,16 @@ static std::string format_duration(int minutes) {
     return std::to_string(h) + "h";
 }
 
+static std::string next_calendar_day(const std::string& date) {
+    int y = std::stoi(date.substr(0, 4));
+    int m = std::stoi(date.substr(5, 2));
+    int d = std::stoi(date.substr(8, 2));
+    if (++d > days_in_month(m, y)) { d = 1; if (++m > 12) { m = 1; ++y; } }
+    char buf[11];
+    snprintf(buf, sizeof(buf), "%04d-%02d-%02d", y, m, d);
+    return buf;
+}
+
 static json build_event_body(const Shift& s, const std::string& day_date,
                              const FunctionMap& func_map,
                              const std::string& timegrip_id) {
@@ -348,7 +368,7 @@ static json build_event_body(const Shift& s, const std::string& day_date,
         return {
             {"summary",     s.absence.type_caption + " — guaranteed no work"},
             {"start",       {{"date", day_date}}},
-            {"end",         {{"date", day_date}}},
+            {"end",         {{"date", next_calendar_day(day_date)}}},
             {"extendedProperties", {{"private", ext}}},
         };
     }
@@ -410,10 +430,35 @@ SyncResult sync_calendar(const std::string& access_token,
                          const std::string& calendar_id,
                          const Timetable&   timetable,
                          const FunctionMap& func_map,
-                         const std::map<std::string, ShiftSnapshot>& snapshot,
-                         const std::string& protect_before) {
+                         std::map<std::string, ShiftSnapshot> snapshot,
+                         const std::string& protect_before,
+                         const std::string& from_date,
+                         const std::string& to_date) {
     GCalClient gc(access_token);
     std::string cal_path = CALENDAR_API + "/calendars/" + calendar_id + "/events";
+
+    std::vector<CalendarEvent> gcal_events;
+    std::set<std::string> gcal_known_ids;
+    bool gcal_fetched = false;
+    try {
+        gcal_events = fetch_managed_events(access_token, calendar_id, from_date, to_date);
+        gcal_fetched = true;
+        for (auto& ev : gcal_events) {
+            gcal_known_ids.insert(ev.id);
+            if (!ev.timegrip_id.empty() && snapshot.find(ev.timegrip_id) == snapshot.end()) {
+                ShiftSnapshot s;
+                s.gcal_event_id = ev.id;
+                s.summary       = ev.summary;
+                s.start         = ev.start;
+                s.end           = ev.end;
+                s.all_day       = ev.all_day;
+                snapshot[ev.timegrip_id] = std::move(s);
+            }
+        }
+    } catch (const std::exception& e) {
+        std::cerr << "  Warning: could not fetch existing GCal events (" << e.what()
+                  << "); skipping orphan cleanup\n";
+    }
 
     std::map<std::string, json> desired;
     for (auto& week : timetable.weeks) {
@@ -476,23 +521,41 @@ SyncResult sync_calendar(const std::string& access_token,
             }
             auto patched = body;
             patched["id"] = snap.gcal_event_id;
-            gc.patch(cal_path + "/" + snap.gcal_event_id, patched);
+            std::string used_gcal_id = snap.gcal_event_id;
+            try {
+                gc.patch(cal_path + "/" + snap.gcal_event_id, patched);
+            } catch (const HttpError& e) {
+                if (e.status != 404) throw;
+                auto resp = gc.post(cal_path, body);
+                used_gcal_id = resp.is_null() ? "" : resp.value("id", "");
+            }
             ++result.updated;
             result.changes.push_back({
                 ShiftChange::Type::Updated,
-                tid, snap.gcal_event_id,
+                tid, used_gcal_id,
                 body.value("summary", ""), s, e, all_day,
                 snap.summary, snap.start, snap.end
             });
         } else {
             const auto& snap = it->second;
-            ++result.unchanged;
-            result.changes.push_back({
-                ShiftChange::Type::Unchanged,
-                tid, snap.gcal_event_id,
-                snap.summary, snap.start, snap.end, snap.all_day,
-                {}, {}, {}
-            });
+            if (gcal_fetched && !snap.gcal_event_id.empty() &&
+                    !gcal_known_ids.count(snap.gcal_event_id)) {
+                auto resp = gc.post(cal_path, body);
+                ++result.created;
+                result.changes.push_back({
+                    ShiftChange::Type::Created, tid,
+                    resp.is_null() ? "" : resp.value("id", ""),
+                    body.value("summary", ""), s, e, all_day, {}, {}, {}
+                });
+            } else {
+                ++result.unchanged;
+                result.changes.push_back({
+                    ShiftChange::Type::Unchanged,
+                    tid, snap.gcal_event_id,
+                    snap.summary, snap.start, snap.end, snap.all_day,
+                    {}, {}, {}
+                });
+            }
         }
     }
 
@@ -509,8 +572,10 @@ SyncResult sync_calendar(const std::string& access_token,
             });
             continue;
         }
-        if (!snap.gcal_event_id.empty())
-            gc.del(cal_path + "/" + snap.gcal_event_id);
+        if (!snap.gcal_event_id.empty()) {
+            try { gc.del(cal_path + "/" + snap.gcal_event_id); }
+            catch (const HttpError& e) { if (e.status != 404) throw; }
+        }
         ++result.deleted;
         result.changes.push_back({
             ShiftChange::Type::Deleted,
@@ -518,6 +583,25 @@ SyncResult sync_calendar(const std::string& access_token,
             {}, {}, {}, snap.all_day,
             snap.summary, snap.start, snap.end
         });
+    }
+
+    std::set<std::string> used_ids;
+    for (auto& ch : result.changes)
+        if (!ch.gcal_event_id.empty())
+            used_ids.insert(ch.gcal_event_id);
+
+    for (auto& ev : gcal_events) {
+        if (!ev.id.empty() && used_ids.find(ev.id) == used_ids.end()) {
+            try { gc.del(cal_path + "/" + ev.id); }
+            catch (const HttpError& e) { if (e.status != 404) throw; }
+            ++result.deleted;
+            result.changes.push_back({
+                ShiftChange::Type::Deleted,
+                ev.timegrip_id, ev.id,
+                {}, {}, {}, ev.all_day,
+                ev.summary, ev.start, ev.end
+            });
+        }
     }
 
     return result;

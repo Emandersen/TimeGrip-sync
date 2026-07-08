@@ -71,5 +71,7 @@ SyncResult sync_calendar(const std::string& access_token,
                          const std::string& calendar_id,
                          const Timetable&   timetable,
                          const FunctionMap& func_map,
-                         const std::map<std::string, ShiftSnapshot>& snapshot,
-                         const std::string& protect_before = "");
+                         std::map<std::string, ShiftSnapshot> snapshot,
+                         const std::string& protect_before,
+                         const std::string& from_date,
+                         const std::string& to_date);

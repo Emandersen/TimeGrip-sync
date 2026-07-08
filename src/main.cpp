@@ -287,7 +287,8 @@ int main(int argc, char* argv[]) {
         std::cout << "  Syncing events…\n";
         auto result = sync_calendar(tokens.access_token, calendar_id,
                                     timetable, func_map,
-                                    snapshot, from_date);
+                                    snapshot, from_date,
+                                    from_date, to_date);
 
         std::cout << "\n✓ Done — "
                   << result.created   << " created · "
