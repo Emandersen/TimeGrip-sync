@@ -64,13 +64,15 @@ MySQL is required. Tables are created automatically on the first run.
 - `pay_periods` — one row per pay month with aggregates and full HTML; locked once the pay date has passed
 
 ## TODO
-- Webhook notifications on schedule changes.
+- notifications through webhooks or other form af push notifications on schedule changes or other events.
 - Make CLI tool less usecase specific, support other login types besides ADFS SSO/SAML.
 - Implement more settings user defineable calculations of wage in terms salary supplement of holidays or hours of the day as well as an advanced way of setting your own calculations of wage.
 - Improve SoC by decoupling DB handling and report generation, making the core tool modular and adaptable for specific use cases.
 - Visualisation, in form of the output report, of the shift changes log.
 - Support for other calendar backends (Outlook, Apple Calendar).
 - `.md` report output format.
+- `.pdf` report output format.
+- Tools for tax doing your taxes ([https://skat.dk/](https://skat.dk/))
 - Export reports to CSV/Excel for easier accounting and tax tracking.
 - automatically flag weeks where hours exceed standard limits and calculate the projected overtime pay.
 - Ability to handle multiple TimeGrip accounts if working multiple jobs that use the same system.
