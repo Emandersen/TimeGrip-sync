@@ -323,7 +323,7 @@ static bool contains_any(const std::string& s,
 }
 
 static std::string parse_time(const std::string& iso) {
-    auto t = iso.find('T');
+    auto t = iso.find_first_of("T ");
     if (t != std::string::npos && iso.size() > t + 5)
         return iso.substr(t + 1, 5);
     return "?";
@@ -519,16 +519,12 @@ SyncResult sync_calendar(const std::string& access_token,
                 });
                 continue;
             }
-            auto patched = body;
-            patched["id"] = snap.gcal_event_id;
-            std::string used_gcal_id = snap.gcal_event_id;
-            try {
-                gc.patch(cal_path + "/" + snap.gcal_event_id, patched);
-            } catch (const HttpError& e) {
-                if (e.status != 404) throw;
-                auto resp = gc.post(cal_path, body);
-                used_gcal_id = resp.is_null() ? "" : resp.value("id", "");
+            if (!snap.gcal_event_id.empty()) {
+                try { gc.del(cal_path + "/" + snap.gcal_event_id); }
+                catch (const HttpError& e) { if (e.status != 404 && e.status != 410) throw; }
             }
+            auto resp = gc.post(cal_path, body);
+            std::string used_gcal_id = resp.is_null() ? "" : resp.value("id", "");
             ++result.updated;
             result.changes.push_back({
                 ShiftChange::Type::Updated,
@@ -574,7 +570,7 @@ SyncResult sync_calendar(const std::string& access_token,
         }
         if (!snap.gcal_event_id.empty()) {
             try { gc.del(cal_path + "/" + snap.gcal_event_id); }
-            catch (const HttpError& e) { if (e.status != 404) throw; }
+            catch (const HttpError& e) { if (e.status != 404 && e.status != 410) throw; }
         }
         ++result.deleted;
         result.changes.push_back({
@@ -593,7 +589,7 @@ SyncResult sync_calendar(const std::string& access_token,
     for (auto& ev : gcal_events) {
         if (!ev.id.empty() && used_ids.find(ev.id) == used_ids.end()) {
             try { gc.del(cal_path + "/" + ev.id); }
-            catch (const HttpError& e) { if (e.status != 404) throw; }
+            catch (const HttpError& e) { if (e.status != 404 && e.status != 410) throw; }
             ++result.deleted;
             result.changes.push_back({
                 ShiftChange::Type::Deleted,
