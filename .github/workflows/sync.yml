@@ -103,3 +103,20 @@ jobs:
           name: pay-report-${{ github.run_number }}
           path: report/
           retention-days: 30
+
+      # Discord failure notification
+      - name: Notify Discord on failure
+        if: failure()
+        env:
+          DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
+        run: |
+          if [ -z "$DISCORD_WEBHOOK" ]; then exit 0; fi
+          curl -s -X POST "$DISCORD_WEBHOOK" \
+            -H "Content-Type: application/json" \
+            -d "{
+              \"embeds\": [{
+                \"title\": \"❌ Sync failed\",
+                \"description\": \"**Sync Timegrip → Google Calendar** failed on run [#${{ github.run_number }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})\",
+                \"color\": 15158332
+              }]
+            }"
