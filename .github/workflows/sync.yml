@@ -104,6 +104,24 @@ jobs:
           path: report/
           retention-days: 30
 
+      # Email failure notification
+      - name: Notify email on failure
+        if: failure()
+        uses: dawidd6/action-send-mail@v4
+        with:
+          server_address: ${{ secrets.MAIL_HOST }}
+          server_port: ${{ secrets.MAIL_PORT }}
+          secure: false
+          username: ${{ secrets.MAIL_USERNAME }}
+          password: ${{ secrets.MAIL_PASSWORD }}
+          subject: "❌ Timegrip sync failed (run #${{ github.run_number }})"
+          to: ${{ secrets.MAIL_TO }}
+          from: Timegrip Sync <${{ secrets.MAIL_USERNAME }}>
+          body: |
+            Sync Timegrip → Google Calendar failed on run #${{ github.run_number }}.
+
+            ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
       # Discord failure notification
       - name: Notify Discord on failure
         if: failure()
