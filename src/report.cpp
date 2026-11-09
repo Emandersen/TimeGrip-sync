@@ -195,6 +195,34 @@ details[open].breakdown summary::before{content:"▼ "}
 .btable td:last-child{text-align:right;font-variant-numeric:tabular-nums}
 .btable .sep td{border-top:2px solid #ddd;font-weight:700;border-bottom:none}
 .btable .info td{color:#888;font-size:.78rem;font-style:italic}
+.head-links{display:flex;align-items:center;gap:.75rem;flex-wrap:wrap;margin-left:auto}
+.head-links a{color:rgba(255,255,255,.8);text-decoration:none;font-size:.82rem;font-weight:600}
+.head-links a:hover{color:#fff}
+.page-panel{background:#fff;border:1px solid #eaeaea;border-radius:14px;box-shadow:0 1px 4px rgba(0,0,0,.06);padding:1.2rem}
+.history-header{display:flex;align-items:center;justify-content:space-between;gap:1rem;flex-wrap:wrap;margin-bottom:1rem}
+.history-header h2{font-size:1.1rem;color:#1a1a1a}
+.history-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:.85rem;margin:1rem 0 1.3rem}
+.mini-card{background:#f7f9ff;border:1px solid #e4ebff;border-radius:10px;padding:.8rem 1rem}
+.mini-card span{display:block;color:#687089;font-size:.72rem;text-transform:uppercase;letter-spacing:.05em;margin-bottom:.2rem}
+.mini-card strong{font-size:1.15rem;color:#1a237e}
+.trend{padding-top:.35rem}
+.trend-row{display:grid;grid-template-columns:140px 1fr 52px;gap:.8rem;align-items:center;margin:.55rem 0}
+.trend-label{font-size:.85rem;color:#445}
+.trend-track{position:relative;height:10px;background:#eef2ff;border-radius:999px;overflow:hidden}
+.trend-fill{display:block;height:100%;background:linear-gradient(90deg,#1a237e,#4f8df7);border-radius:999px}
+.trend-value{font-size:.8rem;color:#1a237e;font-weight:700;text-align:right}
+.change-table{width:100%;border-collapse:collapse;font-size:.82rem}
+.change-table th,.change-table td{padding:.6rem .7rem;border-bottom:1px solid #f0f0f0;vertical-align:top}
+.change-table th{background:#f7f8fa;font-size:.7rem;text-transform:uppercase;letter-spacing:.05em;color:#666;text-align:left}
+.badge{display:inline-block;padding:.2rem .45rem;border-radius:999px;font-size:.68rem;font-weight:700;letter-spacing:.03em;text-transform:uppercase}
+.badge-created{background:#e8f5e9;color:#1b5e20}
+.badge-updated{background:#fff3e0;color:#b26a00}
+.badge-deleted{background:#fce4ec;color:#b71c1c}
+.muted{color:#76809b}
+@media (max-width: 640px){
+  .trend-row{grid-template-columns:1fr;gap:.3rem}
+  .trend-value{text-align:left}
+}
 )css";
 
 struct PeriodEntry {
@@ -527,6 +555,165 @@ if (isset($_GET['m'])) {
     exit;
 }
 
+if (isset($_GET['changes'])) {
+    $counts_stmt = $pdo->query('SELECT change_type, COUNT(*) AS c FROM shift_changes GROUP BY change_type ORDER BY c DESC');
+    $change_counts = ['created' => 0, 'updated' => 0, 'deleted' => 0];
+    foreach ($counts_stmt->fetchAll() as $row) {
+        $change_counts[$row['change_type']] = (int)$row['c'];
+    }
+
+    $trend_stmt = $pdo->query('SELECT period_start, period_end, total_hours FROM pay_periods ORDER BY pay_date ASC');
+    $trend_rows = $trend_stmt->fetchAll();
+    $max_hours = 1.0;
+    foreach ($trend_rows as $row) {
+        $max_hours = max($max_hours, (float)$row['total_hours']);
+    }
+
+    $change_stmt = $pdo->query('SELECT changed_at, timegrip_id, change_type, old_summary, new_summary, old_start_dt, new_start_dt, old_end_dt, new_end_dt FROM shift_changes ORDER BY changed_at DESC LIMIT 250');
+    $change_rows = $change_stmt->fetchAll();
+
+    $stmt = $pdo->query(
+        'SELECT period_start, period_end, pay_date, shift_count,'
+        .' total_hours, brutto_dkk, net_estimated_dkk, locked'
+        .' FROM pay_periods ORDER BY pay_date ASC'
+    );
+    $rows = $stmt->fetchAll();
+    $today = date('Y-m-d');
+
+    $months = ['','januar','februar','marts','april','maj','juni',
+                'juli','august','september','oktober','november','december'];
+
+    function fmt_date_da($ymd, $months) {
+        [$y,$m,$d] = explode('-', $ymd);
+        return intval($d).'. '.$months[intval($m)].' '.$y;
+    }
+    function fmt_period_da($ps, $pe, $months) {
+        [$sy,$sm,$sd] = explode('-', $ps);
+        [$ey,$em,$ed] = explode('-', $pe);
+        $s = intval($sd).'. '.$months[intval($sm)];
+        if ($sy !== $ey) $s .= ' '.$sy;
+        return $s.' – '.intval($ed).'. '.$months[intval($em)].' '.$ey;
+    }
+    function fmt_change_label($type) {
+        $map = ['created' => 'Oprettet', 'updated' => 'Opdateret', 'deleted' => 'Slettet'];
+        return $map[$type] ?? ucfirst((string)$type);
+    }
+    function fmt_change_badge($type) {
+        $map = ['created' => 'badge-created', 'updated' => 'badge-updated', 'deleted' => 'badge-deleted'];
+        return $map[$type] ?? 'badge-created';
+    }
+    ?>
+<!DOCTYPE html>
+<html lang="da">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Ændringshistorik</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:system-ui,-apple-system,sans-serif;background:#f0f2f5;color:#1a1a1a;line-height:1.5}
+header{background:#1a237e;color:#fff;padding:1.1rem 1.5rem;display:flex;align-items:center;gap:1rem;flex-wrap:wrap}
+header h1{font-size:1.2rem;font-weight:700;flex:1}
+.head-links{display:flex;align-items:center;gap:.8rem;flex-wrap:wrap}
+.head-links a{color:rgba(255,255,255,.8);font-size:.82rem;font-weight:600;text-decoration:none}
+.head-links a:hover{color:#fff}
+.wrap{max-width:1100px;margin:1.5rem auto;padding:0 1rem}
+.panel{background:#fff;border-radius:12px;box-shadow:0 1px 4px rgba(0,0,0,.08);padding:1.1rem 1.2rem}
+.history-header{display:flex;justify-content:space-between;align-items:center;gap:1rem;flex-wrap:wrap;margin-bottom:1rem}
+.history-header h2{font-size:1.12rem;font-weight:700}
+.summary-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:.8rem;margin-bottom:1.25rem}
+.stat{background:#f7f9ff;border:1px solid #e4ebff;border-radius:10px;padding:.8rem 1rem}
+.stat .lbl{font-size:.72rem;text-transform:uppercase;letter-spacing:.05em;color:#66708b;display:block;margin-bottom:.2rem}
+.stat .val{font-size:1.2rem;font-weight:700;color:#1a237e}
+.trend{display:flex;flex-direction:column;gap:.6rem}
+.trend-row{display:grid;grid-template-columns:160px 1fr 54px;gap:.8rem;align-items:center}
+.trend-label{font-size:.82rem;color:#47506b}
+.trend-track{background:#eef2ff;height:10px;border-radius:999px;overflow:hidden}
+.trend-fill{display:block;height:100%;border-radius:999px;background:linear-gradient(90deg,#1a237e,#4f8df7)}
+.trend-value{font-size:.8rem;font-weight:700;color:#1a237e;text-align:right}
+table{width:100%;border-collapse:collapse;font-size:.82rem}
+th,td{padding:.6rem .7rem;border-bottom:1px solid #f0f0f0;vertical-align:top;text-align:left}
+th{background:#f7f8fa;color:#666;text-transform:uppercase;letter-spacing:.05em;font-size:.68rem}
+.badge{display:inline-block;padding:.2rem .45rem;border-radius:999px;font-size:.65rem;font-weight:700;letter-spacing:.03em;text-transform:uppercase}
+.badge-created{background:#e8f5e9;color:#1b5e20}
+.badge-updated{background:#fff3e0;color:#b26a00}
+.badge-deleted{background:#fce4ec;color:#b71c1c}
+.muted{color:#76809b}
+@media (max-width:640px){
+  .trend-row{grid-template-columns:1fr;gap:.25rem}
+  .trend-value{text-align:left}
+}
+</style>
+</head>
+<body>
+<header>
+  <h1>Ændringshistorik</h1>
+  <div class="head-links">
+    <a href="?">Lønoversigt</a>
+    <a href="?changes">Ændringshistorik</a>
+    <a href="?logout">Log ud</a>
+  </div>
+</header>
+<div class="wrap">
+  <div class="panel">
+    <div class="history-header">
+      <h2>Historik over ændringer</h2>
+      <a href="?" style="color:#1a237e;text-decoration:none;font-weight:600">← Tilbage til oversigt</a>
+    </div>
+    <div class="summary-grid">
+      <div class="stat"><span class="lbl">Oprettede</span><span class="val"><?= (int)$change_counts['created'] ?></span></div>
+      <div class="stat"><span class="lbl">Opdaterede</span><span class="val"><?= (int)$change_counts['updated'] ?></span></div>
+      <div class="stat"><span class="lbl">Slettede</span><span class="val"><?= (int)$change_counts['deleted'] ?></span></div>
+      <div class="stat"><span class="lbl">Periodeoversigt</span><span class="val"><?= count($trend_rows) ?></span></div>
+    </div>
+
+    <div class="trend">
+      <?php foreach ($trend_rows as $r): ?>
+      <?php $hours = (float)$r['total_hours']; $pct = ($hours / $max_hours) * 100; ?>
+      <div class="trend-row">
+        <div class="trend-label"><?= htmlspecialchars(fmt_period_da($r['period_start'], $r['period_end'], $months)) ?></div>
+        <div class="trend-track"><span class="trend-fill" style="width:<?= min(100, max(6, $pct)) ?>%"></span></div>
+        <div class="trend-value"><?= number_format($hours, 1, ',', '.') ?>t</div>
+      </div>
+      <?php endforeach; ?>
+    </div>
+  </div>
+
+  <div class="panel" style="margin-top:1rem;">
+    <div class="history-header">
+      <h2>Seneste ændringer</h2>
+    </div>
+    <table>
+      <thead>
+        <tr>
+          <th>Tidspunkt</th>
+          <th>Type</th>
+          <th>Shift</th>
+          <th>Beskrivelse</th>
+          <th>Ændret fra → til</th>
+        </tr>
+      </thead>
+      <tbody>
+        <?php foreach ($change_rows as $r): ?>
+        <?php $old_sum = trim((string)($r['old_summary'] ?? '')); $new_sum = trim((string)($r['new_summary'] ?? '')); $old_start = trim((string)($r['old_start_dt'] ?? '')); $new_start = trim((string)($r['new_start_dt'] ?? '')); $old_end = trim((string)($r['old_end_dt'] ?? '')); $new_end = trim((string)($r['new_end_dt'] ?? '')); ?>
+        <tr>
+          <td><?= htmlspecialchars(date('d-m-Y H:i', strtotime($r['changed_at']))) ?></td>
+          <td><span class="badge <?= fmt_change_badge($r['change_type']) ?>"><?= htmlspecialchars(fmt_change_label($r['change_type'])) ?></span></td>
+          <td class="muted"><?= htmlspecialchars(substr($r['timegrip_id'], 0, 18)) ?><?= strlen($r['timegrip_id']) > 18 ? '…' : '' ?></td>
+          <td><?= htmlspecialchars($new_sum !== '' ? $new_sum : ($old_sum !== '' ? $old_sum : '-')) ?></td>
+          <td class="muted"><?= htmlspecialchars(($old_start !== '' ? $old_start : '-') . ' → ' . ($new_start !== '' ? $new_start : '-')) ?> / <?= htmlspecialchars(($old_end !== '' ? $old_end : '-') . ' → ' . ($new_end !== '' ? $new_end : '-')) ?></td>
+        </tr>
+        <?php endforeach; ?>
+      </tbody>
+    </table>
+  </div>
+</div>
+</body>
+</html>
+<?php
+    exit;
+}
+
 $stmt = $pdo->query(
     'SELECT period_start, period_end, pay_date, shift_count,'
     .' total_hours, brutto_dkk, net_estimated_dkk, locked'
@@ -536,7 +723,7 @@ $rows = $stmt->fetchAll();
 $today = date('Y-m-d');
 
 $months = ['','januar','februar','marts','april','maj','juni',
-           'juli','august','september','oktober','november','december'];
+            'juli','august','september','oktober','november','december'];
 
 function fmt_date_da($ymd, $months) {
     [$y,$m,$d] = explode('-', $ymd);
@@ -558,10 +745,11 @@ function fmt_period_da($ps, $pe, $months) {
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 body{font-family:system-ui,-apple-system,sans-serif;background:#f0f2f5;color:#1a1a1a}
-header{background:#1a237e;color:#fff;padding:1.1rem 1.5rem;display:flex;align-items:center;gap:1rem}
+header{background:#1a237e;color:#fff;padding:1.1rem 1.5rem;display:flex;align-items:center;gap:1rem;flex-wrap:wrap}
 header h1{font-size:1.2rem;font-weight:700;flex:1}
-.logout{color:rgba(255,255,255,.65);font-size:.82rem;text-decoration:none}
-.logout:hover{color:#fff}
+.head-links{display:flex;align-items:center;gap:.8rem;flex-wrap:wrap}
+.head-links a{color:rgba(255,255,255,.8);font-size:.82rem;text-decoration:none;font-weight:600}
+.head-links a:hover{color:#fff}
 .cards{max-width:700px;margin:1.5rem auto;padding:0 1rem;display:flex;flex-direction:column;gap:.85rem}
 .card{background:#fff;border-radius:10px;box-shadow:0 1px 4px rgba(0,0,0,.09);
       padding:1rem 1.25rem;display:flex;align-items:center;justify-content:space-between;
@@ -582,7 +770,11 @@ header h1{font-size:1.2rem;font-weight:700;flex:1}
 <body>
 <header>
   <h1>Lønoversigt</h1>
-  <a class="logout" href="?logout">Log ud</a>
+  <div class="head-links">
+    <a href="?">Oversigt</a>
+    <a href="?changes">Ændringshistorik</a>
+    <a href="?logout">Log ud</a>
+  </div>
 </header>
 <div class="cards">
 <?php foreach ($rows as $r):
@@ -665,3 +857,4 @@ void generate_gate_files(const std::string& out_dir,
         hf << "DirectoryIndex gate.php\n";
     }
 }
+
