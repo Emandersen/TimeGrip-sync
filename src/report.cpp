@@ -595,6 +595,54 @@ if (isset($_GET['changes'])) {
         $map = ['created' => 'badge-created', 'updated' => 'badge-updated', 'deleted' => 'badge-deleted'];
         return $map[$type] ?? 'badge-created';
     }
+    function ch_parse_dt($s) {
+        $s = trim((string)$s);
+        if ($s === '') return null;
+        $t = strtotime($s);
+        return $t === false ? null : $t;
+    }
+    function ch_dur($start, $end) {
+        if ($start === null || $end === null) return null;
+        return ($end - $start) / 3600.0;
+    }
+    function ch_range($start, $end) {
+        if ($start === null && $end === null) return '—';
+        return ($start !== null ? date('H:i', $start) : '??')
+             . '–' . ($end !== null ? date('H:i', $end) : '??');
+    }
+
+    // Enrich each change with a duration delta and a "needs attention" flag.
+    // Flag = a deletion, or an update that shortens a shift (less paid time),
+    // or a shift whose start/end was moved after the fact. These are the rows
+    // worth checking against working-time rules.
+    $flagged_count = 0;
+    foreach ($change_rows as $i => $cr) {
+        $os = ch_parse_dt($cr['old_start_dt']); $ns = ch_parse_dt($cr['new_start_dt']);
+        $oe = ch_parse_dt($cr['old_end_dt']);   $ne = ch_parse_dt($cr['new_end_dt']);
+        $old_dur = ch_dur($os, $oe);
+        $new_dur = ch_dur($ns, $ne);
+        $delta = ($old_dur !== null && $new_dur !== null) ? $new_dur - $old_dur : null;
+        $moved = ($os !== null && $ns !== null && $os !== $ns)
+              || ($oe !== null && $ne !== null && $oe !== $ne);
+        $shortened = ($cr['change_type'] === 'updated' && $delta !== null && $delta < -0.01);
+        $flag = ($cr['change_type'] === 'deleted') || $shortened;
+        if ($flag) $flagged_count++;
+        $change_rows[$i]['_old_start'] = $os; $change_rows[$i]['_new_start'] = $ns;
+        $change_rows[$i]['_old_end']   = $oe; $change_rows[$i]['_new_end']   = $ne;
+        $change_rows[$i]['_old_dur'] = $old_dur; $change_rows[$i]['_new_dur'] = $new_dur;
+        $change_rows[$i]['_delta'] = $delta;
+        $change_rows[$i]['_moved'] = $moved;
+        $change_rows[$i]['_flag']  = $flag;
+        $change_rows[$i]['_shiftdate'] = $ns ?? $os;
+    }
+
+    // Period-hours trend: attach change vs. previous period so direction is visible.
+    $prev_h = null;
+    foreach ($trend_rows as $i => $tr) {
+        $h = (float)$tr['total_hours'];
+        $trend_rows[$i]['_delta'] = ($prev_h === null) ? null : $h - $prev_h;
+        $prev_h = $h;
+    }
     ?>
 <!DOCTYPE html>
 <html lang="da">
@@ -632,9 +680,35 @@ th{background:#f7f8fa;color:#666;text-transform:uppercase;letter-spacing:.05em;f
 .badge-updated{background:#fff3e0;color:#b26a00}
 .badge-deleted{background:#fce4ec;color:#b71c1c}
 .muted{color:#76809b}
+.stat.flag{background:#fff5f5;border-color:#f3c0c0}
+.stat.flag .val{color:#c62828}
+.stat.flag .lbl{color:#c0686e}
+.trend-value{display:flex;flex-direction:column;align-items:flex-end;gap:1px}
+.trend-delta{font-size:.68rem;font-weight:700}
+.up{color:#1b5e20}.down{color:#c62828}.flat{color:#9aa}
+.intro{color:#66708b;font-size:.85rem;margin-bottom:1rem}
+.filters{display:flex;gap:.5rem;flex-wrap:wrap;margin-bottom:1rem}
+.filters button{border:1px solid #d5dbe8;background:#fff;color:#44506b;font-size:.78rem;font-weight:600;
+  padding:.4rem .85rem;border-radius:999px;cursor:pointer;transition:background .12s,color .12s}
+.filters button:hover{background:#f0f3fb}
+.filters button.active{background:#1a237e;color:#fff;border-color:#1a237e}
+.filters button.flagbtn.active{background:#c62828;border-color:#c62828}
+tr.flag{background:#fff6f6}
+tr.flag td{border-bottom-color:#f3dede}
+.flag-tag{display:inline-block;margin-left:.4rem;font-size:.6rem;font-weight:800;color:#c62828;
+  text-transform:uppercase;letter-spacing:.03em;white-space:nowrap}
+.timerange{font-variant-numeric:tabular-nums;font-weight:600;color:#333;white-space:nowrap}
+.arrow{color:#aab;padding:0 .2rem}
+.delta{display:inline-block;margin-left:.4rem;font-size:.7rem;font-weight:700;padding:.05rem .4rem;
+  border-radius:999px;white-space:nowrap}
+.delta.neg{background:#fce4ec;color:#b71c1c}
+.delta.pos{background:#e8f5e9;color:#1b5e20}
+.shiftdate{color:#66708b;font-size:.74rem;margin-top:.15rem}
+.no-rows{text-align:center;color:#8a92a8;padding:1.5rem;font-size:.85rem}
 @media (max-width:640px){
-  .trend-row{grid-template-columns:1fr;gap:.25rem}
-  .trend-value{text-align:left}
+  .trend-row{grid-template-columns:1fr auto;gap:.25rem .6rem}
+  .trend-track{grid-column:1 / -1;order:3}
+  .trend-value{align-items:flex-start;text-align:left}
 }
 </style>
 </head>
@@ -653,54 +727,121 @@ th{background:#f7f8fa;color:#666;text-transform:uppercase;letter-spacing:.05em;f
       <h2>Historik over ændringer</h2>
       <a href="?" style="color:#1a237e;text-decoration:none;font-weight:600">← Tilbage til oversigt</a>
     </div>
+    <p class="intro">Fremhævede rækker er sletninger eller vagter der er blevet forkortet efter registrering – værd at tjekke mod arbejdstidsreglerne.</p>
     <div class="summary-grid">
       <div class="stat"><span class="lbl">Oprettede</span><span class="val"><?= (int)$change_counts['created'] ?></span></div>
       <div class="stat"><span class="lbl">Opdaterede</span><span class="val"><?= (int)$change_counts['updated'] ?></span></div>
       <div class="stat"><span class="lbl">Slettede</span><span class="val"><?= (int)$change_counts['deleted'] ?></span></div>
-      <div class="stat"><span class="lbl">Periodeoversigt</span><span class="val"><?= count($trend_rows) ?></span></div>
+      <div class="stat <?= $flagged_count > 0 ? 'flag' : '' ?>"><span class="lbl">⚠ Bemærkninger</span><span class="val"><?= (int)$flagged_count ?></span></div>
     </div>
 
+    <h2 style="font-size:.95rem;font-weight:700;margin:.4rem 0 .7rem;color:#1a237e">Timer pr. periode</h2>
     <div class="trend">
       <?php foreach ($trend_rows as $r): ?>
-      <?php $hours = (float)$r['total_hours']; $pct = ($hours / $max_hours) * 100; ?>
+      <?php
+        $hours = (float)$r['total_hours']; $pct = ($hours / $max_hours) * 100;
+        $d = $r['_delta'];
+        if ($d === null)       { $dcls = 'flat'; $dtxt = 'første'; }
+        elseif ($d > 0.05)     { $dcls = 'up';   $dtxt = '▲ '.number_format($d,1,',','.').'t'; }
+        elseif ($d < -0.05)    { $dcls = 'down'; $dtxt = '▼ '.number_format(abs($d),1,',','.').'t'; }
+        else                   { $dcls = 'flat'; $dtxt = '→ uændret'; }
+      ?>
       <div class="trend-row">
         <div class="trend-label"><?= htmlspecialchars(fmt_period_da($r['period_start'], $r['period_end'], $months)) ?></div>
         <div class="trend-track"><span class="trend-fill" style="width:<?= min(100, max(6, $pct)) ?>%"></span></div>
-        <div class="trend-value"><?= number_format($hours, 1, ',', '.') ?>t</div>
+        <div class="trend-value"><span><?= number_format($hours, 1, ',', '.') ?>t</span><span class="trend-delta <?= $dcls ?>"><?= $dtxt ?></span></div>
       </div>
       <?php endforeach; ?>
     </div>
   </div>
 
-  <div class="panel" style="margin-top:1rem;">
+  <div class="panel" style="margin-top:1.4rem;">
     <div class="history-header">
       <h2>Seneste ændringer</h2>
     </div>
-    <table>
+    <div class="filters">
+      <button class="fbtn active" data-filter="all">Alle</button>
+      <button class="fbtn" data-filter="created">Oprettede</button>
+      <button class="fbtn" data-filter="updated">Opdaterede</button>
+      <button class="fbtn" data-filter="deleted">Slettede</button>
+      <button class="fbtn flagbtn" data-filter="flag">⚠ Kun bemærkninger (<?= (int)$flagged_count ?>)</button>
+    </div>
+    <table id="changes">
       <thead>
         <tr>
-          <th>Tidspunkt</th>
+          <th>Ændret</th>
           <th>Type</th>
-          <th>Shift</th>
-          <th>Beskrivelse</th>
-          <th>Ændret fra → til</th>
+          <th>Vagt</th>
+          <th>Tidspunkt (før → efter)</th>
         </tr>
       </thead>
       <tbody>
         <?php foreach ($change_rows as $r): ?>
-        <?php $old_sum = trim((string)($r['old_summary'] ?? '')); $new_sum = trim((string)($r['new_summary'] ?? '')); $old_start = trim((string)($r['old_start_dt'] ?? '')); $new_start = trim((string)($r['new_start_dt'] ?? '')); $old_end = trim((string)($r['old_end_dt'] ?? '')); $new_end = trim((string)($r['new_end_dt'] ?? '')); ?>
-        <tr>
-          <td><?= htmlspecialchars(date('d-m-Y H:i', strtotime($r['changed_at']))) ?></td>
-          <td><span class="badge <?= fmt_change_badge($r['change_type']) ?>"><?= htmlspecialchars(fmt_change_label($r['change_type'])) ?></span></td>
-          <td class="muted"><?= htmlspecialchars(substr($r['timegrip_id'], 0, 18)) ?><?= strlen($r['timegrip_id']) > 18 ? '…' : '' ?></td>
-          <td><?= htmlspecialchars($new_sum !== '' ? $new_sum : ($old_sum !== '' ? $old_sum : '-')) ?></td>
-          <td class="muted"><?= htmlspecialchars(($old_start !== '' ? $old_start : '-') . ' → ' . ($new_start !== '' ? $new_start : '-')) ?> / <?= htmlspecialchars(($old_end !== '' ? $old_end : '-') . ' → ' . ($new_end !== '' ? $new_end : '-')) ?></td>
+        <?php
+          $old_sum = trim((string)($r['old_summary'] ?? ''));
+          $new_sum = trim((string)($r['new_summary'] ?? ''));
+          $summary = $new_sum !== '' ? $new_sum : ($old_sum !== '' ? $old_sum : '—');
+          $old_range = ch_range($r['_old_start'], $r['_old_end']);
+          $new_range = ch_range($r['_new_start'], $r['_new_end']);
+          $delta = $r['_delta'];
+        ?>
+        <tr class="<?= $r['_flag'] ? 'flag' : '' ?>" data-type="<?= htmlspecialchars($r['change_type']) ?>" data-flag="<?= $r['_flag'] ? '1' : '0' ?>">
+          <td class="muted" style="white-space:nowrap"><?= htmlspecialchars(date('d-m-Y H:i', strtotime($r['changed_at']))) ?></td>
+          <td>
+            <span class="badge <?= fmt_change_badge($r['change_type']) ?>"><?= htmlspecialchars(fmt_change_label($r['change_type'])) ?></span>
+            <?php if ($r['_flag']): ?><span class="flag-tag"><?= $r['change_type'] === 'deleted' ? '⚠ slettet' : '⚠ forkortet' ?></span><?php endif; ?>
+          </td>
+          <td>
+            <?= htmlspecialchars($summary) ?>
+            <?php if ($r['_shiftdate'] !== null): ?><div class="shiftdate"><?= htmlspecialchars(date('d-m-Y', $r['_shiftdate'])) ?></div><?php endif; ?>
+          </td>
+          <td>
+            <?php if ($r['change_type'] === 'deleted'): ?>
+              <span class="timerange"><?= htmlspecialchars($old_range) ?></span><span class="arrow">→</span><span class="muted">slettet</span>
+            <?php elseif ($r['change_type'] === 'created'): ?>
+              <span class="muted">—</span><span class="arrow">→</span><span class="timerange"><?= htmlspecialchars($new_range) ?></span>
+            <?php else: ?>
+              <span class="timerange"><?= htmlspecialchars($old_range) ?></span><span class="arrow">→</span><span class="timerange"><?= htmlspecialchars($new_range) ?></span>
+            <?php endif; ?>
+            <?php if ($delta !== null && abs($delta) >= 0.01): ?>
+              <span class="delta <?= $delta < 0 ? 'neg' : 'pos' ?>"><?= ($delta < 0 ? '−' : '+') . number_format(abs($delta),1,',','.') ?>t</span>
+            <?php endif; ?>
+          </td>
         </tr>
         <?php endforeach; ?>
+        <?php if (empty($change_rows)): ?>
+        <tr><td colspan="4" class="no-rows">Ingen ændringer registreret endnu.</td></tr>
+        <?php endif; ?>
       </tbody>
     </table>
+    <p class="no-rows" id="emptyfilter" style="display:none">Ingen ændringer matcher dette filter.</p>
   </div>
 </div>
+<script>
+(function(){
+  var buttons = Array.from(document.querySelectorAll('.filters .fbtn'));
+  var rows = Array.from(document.querySelectorAll('#changes tbody tr[data-type]'));
+  var empty = document.getElementById('emptyfilter');
+  function apply(filter){
+    var shown = 0;
+    rows.forEach(function(tr){
+      var ok = filter === 'all'
+        || (filter === 'flag' && tr.dataset.flag === '1')
+        || tr.dataset.type === filter;
+      tr.style.display = ok ? '' : 'none';
+      if (ok) shown++;
+    });
+    if (empty) empty.style.display = (rows.length && shown === 0) ? 'block' : 'none';
+  }
+  buttons.forEach(function(b){
+    b.addEventListener('click', function(){
+      buttons.forEach(function(x){ x.classList.remove('active'); });
+      b.classList.add('active');
+      apply(b.dataset.filter);
+    });
+  });
+})();
+</script>
 </body>
 </html>
 <?php
@@ -743,21 +884,41 @@ header h1{font-size:1.2rem;font-weight:700;flex:1}
 .head-links{display:flex;align-items:center;gap:.8rem;flex-wrap:wrap}
 .head-links a{color:rgba(255,255,255,.8);font-size:.82rem;text-decoration:none;font-weight:600}
 .head-links a:hover{color:#fff}
-.cards{max-width:700px;margin:1.5rem auto;padding:0 1rem;display:flex;flex-direction:column;gap:.85rem}
-.card{background:#fff;border-radius:10px;box-shadow:0 1px 4px rgba(0,0,0,.09);
-      padding:1rem 1.25rem;display:flex;align-items:center;justify-content:space-between;
-      gap:1rem;flex-wrap:wrap;text-decoration:none;color:inherit;transition:box-shadow .15s}
-.card:hover{box-shadow:0 3px 14px rgba(0,0,0,.14)}
-.card.current{border:2px solid #1a237e;background:#f0f4ff}
-.card-left{}
-.card-period{font-weight:600;font-size:.95rem;color:#1a1a1a}
-.card-pay{font-size:1rem;font-weight:700;color:#1a237e;margin-top:.2rem}
-.card-pay.past{color:#555;font-weight:600}
-.locked-badge{display:inline-block;font-size:.72rem;background:#e8f5e9;color:#2e7d32;
-              padding:.1rem .5rem;border-radius:3px;margin-left:.5rem;font-weight:600;vertical-align:middle}
-.card-stats{display:flex;gap:1.25rem;flex-wrap:wrap;font-size:.88rem;color:#555}
-.card-stats .val{font-weight:700;color:#1a237e}
-.card-stats .val.net{color:#1b5e20}
+.wrap{max-width:720px;margin:1.5rem auto;padding:0 1rem;display:flex;flex-direction:column;gap:1.4rem}
+/* Hero: next payout */
+.hero{background:linear-gradient(135deg,#1a237e,#3949ab);color:#fff;border-radius:16px;
+      padding:1.4rem 1.6rem;box-shadow:0 4px 18px rgba(26,35,126,.25);text-decoration:none;display:block}
+.hero .hero-label{font-size:.72rem;text-transform:uppercase;letter-spacing:.08em;opacity:.8}
+.hero .hero-net{font-size:2.3rem;font-weight:800;margin:.15rem 0 .1rem;letter-spacing:-.02em}
+.hero .hero-sub{font-size:.95rem;opacity:.92;font-weight:600}
+.hero .hero-meta{display:flex;gap:1.5rem;flex-wrap:wrap;margin-top:1rem;padding-top:1rem;
+                 border-top:1px solid rgba(255,255,255,.2);font-size:.85rem}
+.hero .hero-meta .lbl{opacity:.75;display:block;font-size:.72rem;text-transform:uppercase;letter-spacing:.04em}
+.hero .hero-meta .v{font-weight:700;font-size:1rem}
+/* Section headings */
+.section-title{font-size:.8rem;text-transform:uppercase;letter-spacing:.06em;color:#66708b;
+               font-weight:700;margin:0 .25rem .2rem}
+.cards{display:flex;flex-direction:column;gap:.7rem}
+.card{background:#fff;border-radius:12px;box-shadow:0 1px 4px rgba(0,0,0,.08);
+      padding:1rem 1.2rem;display:flex;align-items:center;justify-content:space-between;
+      gap:1rem;flex-wrap:wrap;text-decoration:none;color:inherit;transition:box-shadow .15s,transform .15s}
+.card:hover{box-shadow:0 4px 16px rgba(0,0,0,.14);transform:translateY(-1px)}
+.card.past{opacity:.9}
+.card-left{min-width:180px}
+.card-period{font-weight:700;font-size:.98rem;color:#1a1a1a}
+.card-pay{font-size:.85rem;color:#687089;margin-top:.25rem}
+.card-pay strong{color:#1a237e;font-weight:700}
+.locked-badge{display:inline-block;font-size:.68rem;background:#e8f5e9;color:#2e7d32;
+              padding:.12rem .5rem;border-radius:999px;margin-left:.5rem;font-weight:700;vertical-align:middle}
+.card-stats{display:flex;gap:1.4rem;flex-wrap:wrap;text-align:right}
+.card-stats .stat .lbl{display:block;font-size:.66rem;text-transform:uppercase;letter-spacing:.04em;color:#8a92a8}
+.card-stats .stat .val{font-weight:700;font-size:.98rem;color:#1a237e}
+.card-stats .stat .val.net{color:#1b5e20}
+.empty{padding:2rem;color:#888;text-align:center}
+@media (max-width:560px){
+  .card{align-items:flex-start}
+  .card-stats{text-align:left;gap:1rem}
+}
 </style>
 </head>
 <body>
@@ -769,45 +930,70 @@ header h1{font-size:1.2rem;font-weight:700;flex:1}
     <a href="?logout">Log ud</a>
   </div>
 </header>
-<div class="cards">
-<?php foreach ($rows as $r):
-    $is_past = $r['pay_date'] < $today;
-    $cls = 'card' . ($r['locked'] ? ' locked' : '');
+<?php
+$upcoming = array_values(array_filter($rows, fn($r) => $r['pay_date'] >= $today));
+$past     = array_values(array_filter($rows, fn($r) => $r['pay_date'] <  $today));
+$next     = $upcoming[0] ?? null;
+
+function render_card($r, $months, $is_past) {
+    $cls = 'card' . ($is_past ? ' past' : '');
 ?>
-<a class="<?= $cls ?>" data-pay="<?= htmlspecialchars($r['pay_date']) ?>"
-   href="?m=<?= urlencode($r['period_start']) ?>">
+<a class="<?= $cls ?>" href="?m=<?= urlencode($r['period_start']) ?>">
   <div class="card-left">
     <div class="card-period">
       <?= htmlspecialchars(fmt_period_da($r['period_start'], $r['period_end'], $months)) ?>
       <?php if ($r['locked']): ?><span class="locked-badge">betalt</span><?php endif; ?>
     </div>
-    <div class="card-pay <?= $is_past ? 'past' : '' ?>">
-      Udbetaling <?= htmlspecialchars(fmt_date_da($r['pay_date'], $months)) ?>
-    </div>
+    <div class="card-pay">Udbetaling <strong><?= htmlspecialchars(fmt_date_da($r['pay_date'], $months)) ?></strong></div>
   </div>
   <div class="card-stats">
-    <span><?= intval($r['shift_count']) ?> vagter</span>
-    <span><span class="val"><?= number_format($r['total_hours'],1,',','.') ?>t</span></span>
-    <span>Brutto <span class="val"><?= number_format($r['brutto_dkk'],0,',','.') ?>&nbsp;kr</span></span>
-    <span>Netto <span class="val net"><?= number_format($r['net_estimated_dkk'],0,',','.') ?>&nbsp;kr</span></span>
+    <span class="stat"><span class="lbl">Vagter</span><span class="val"><?= intval($r['shift_count']) ?></span></span>
+    <span class="stat"><span class="lbl">Timer</span><span class="val"><?= number_format($r['total_hours'],1,',','.') ?></span></span>
+    <span class="stat"><span class="lbl">Brutto</span><span class="val"><?= number_format($r['brutto_dkk'],0,',','.') ?> kr</span></span>
+    <span class="stat"><span class="lbl">Netto</span><span class="val net"><?= number_format($r['net_estimated_dkk'],0,',','.') ?> kr</span></span>
   </div>
 </a>
-<?php endforeach; ?>
+<?php }
+?>
+<div class="wrap">
 <?php if (empty($rows)): ?>
-<p style="padding:2rem;color:#888;text-align:center">Ingen lønperioder endnu.</p>
+  <p class="empty">Ingen lønperioder endnu.</p>
+<?php else: ?>
+
+  <?php if ($next): ?>
+  <a class="hero" href="?m=<?= urlencode($next['period_start']) ?>">
+    <span class="hero-label">Næste udbetaling · <?= htmlspecialchars(fmt_date_da($next['pay_date'], $months)) ?></span>
+    <div class="hero-net"><?= number_format($next['net_estimated_dkk'],0,',','.') ?> kr</div>
+    <div class="hero-sub">Netto for <?= htmlspecialchars(fmt_period_da($next['period_start'], $next['period_end'], $months)) ?></div>
+    <div class="hero-meta">
+      <span><span class="lbl">Vagter</span><span class="v"><?= intval($next['shift_count']) ?></span></span>
+      <span><span class="lbl">Timer</span><span class="v"><?= number_format($next['total_hours'],1,',','.') ?></span></span>
+      <span><span class="lbl">Brutto</span><span class="v"><?= number_format($next['brutto_dkk'],0,',','.') ?> kr</span></span>
+    </div>
+  </a>
+  <?php endif; ?>
+
+  <?php $rest_upcoming = array_slice($upcoming, 1); ?>
+  <?php if ($rest_upcoming): ?>
+  <div>
+    <div class="section-title">Kommende lønperioder</div>
+    <div class="cards">
+      <?php foreach ($rest_upcoming as $r) render_card($r, $months, false); ?>
+    </div>
+  </div>
+  <?php endif; ?>
+
+  <?php if ($past): ?>
+  <div>
+    <div class="section-title">Tidligere lønperioder</div>
+    <div class="cards">
+      <?php foreach (array_reverse($past) as $r) render_card($r, $months, true); ?>
+    </div>
+  </div>
+  <?php endif; ?>
+
 <?php endif; ?>
 </div>
-<script>
-(function(){
-  var today = new Date().toISOString().slice(0,10);
-  var cards = Array.from(document.querySelectorAll('.card[data-pay]'));
-  var current = cards.find(function(c){ return c.dataset.pay >= today; });
-  if (current) {
-    current.classList.add('current');
-    current.scrollIntoView({block:'start', behavior:'smooth'});
-  }
-})();
-</script>
 </body>
 </html>
 )GATE";
