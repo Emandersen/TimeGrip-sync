@@ -583,17 +583,10 @@ if (isset($_GET['changes'])) {
     $months = ['','januar','februar','marts','april','maj','juni',
                 'juli','august','september','oktober','november','december'];
 
-    function fmt_date_da($ymd, $months) {
-        [$y,$m,$d] = explode('-', $ymd);
-        return intval($d).'. '.$months[intval($m)].' '.$y;
-    }
-    function fmt_period_da($ps, $pe, $months) {
-        [$sy,$sm,$sd] = explode('-', $ps);
-        [$ey,$em,$ed] = explode('-', $pe);
-        $s = intval($sd).'. '.$months[intval($sm)];
-        if ($sy !== $ey) $s .= ' '.$sy;
-        return $s.' – '.intval($ed).'. '.$months[intval($em)].' '.$ey;
-    }
+    // fmt_date_da() and fmt_period_da() are declared once at file scope below
+    // (PHP hoists top-level function declarations), so they are already
+    // available here. Re-declaring them in this branch would be a fatal
+    // "Cannot redeclare function" error.
     function fmt_change_label($type) {
         $map = ['created' => 'Oprettet', 'updated' => 'Opdateret', 'deleted' => 'Slettet'];
         return $map[$type] ?? ucfirst((string)$type);

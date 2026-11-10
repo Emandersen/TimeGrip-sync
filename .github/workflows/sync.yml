@@ -58,6 +58,13 @@ jobs:
           mkdir -p report
           nix run . -- --report report/
 
+      # Validate the generated PHP before it is deployed. Catches issues like
+      # duplicate function declarations that would otherwise fatal at runtime.
+      - name: Lint generated gate.php
+        run: |
+          sudo apt-get install -y php-cli -qq
+          php -l report/gate.php
+
       # Check whether FTP is configured
       - name: Check FTP config
         id: ftp
